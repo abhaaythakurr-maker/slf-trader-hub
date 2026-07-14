@@ -118,6 +118,24 @@
   .bn-item{ display:flex; flex-direction:column; align-items:center; gap:2px; color:var(--text-soft); cursor:pointer; font-size:10px; flex:1; padding:4px 0; }
   .bn-icon{ font-size:19px; }
   .bn-item.active{ color:var(--green); }
+
+  .rms-tabs{ display:flex; gap:6px; margin-bottom:18px; background:var(--panel); border-radius:10px; padding:4px; border:1px solid var(--border); }
+  .rms-tab{ flex:1; text-align:center; padding:9px; border-radius:8px; font-size:13px; cursor:pointer; color:var(--text-soft); }
+  .rms-tab.active{ background:var(--green); color:#06120D; font-weight:700; }
+  .rms-output{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:16px; }
+  .rms-output .out-card{ background:var(--panel-soft); border:1px solid var(--border); border-radius:12px; padding:14px; }
+  .rms-output .out-card.danger{ border-color:var(--red); }
+  .rms-output .out-card.warn{ border-color:var(--gold); }
+  .rms-output .out-card .lbl{ font-size:10.5px; color:var(--text-soft); text-transform:uppercase; letter-spacing:0.4px; margin-bottom:6px; }
+  .rms-output .out-card .val{ font-family:var(--font-mono); font-size:19px; font-weight:bold; color:var(--green); }
+  .rms-output .out-card.danger .val{ color:var(--red); }
+  .rms-output .out-card.warn .val{ color:var(--gold); }
+  .rms-output .out-card .sub{ font-size:11px; color:var(--text-soft); margin-top:4px; }
+  .breach-banner{ background:var(--red-soft); border:1px solid var(--red); color:var(--red); border-radius:10px; padding:12px 14px; margin-top:14px; font-size:13px; }
+  .rules-list{ list-style:none; padding:0; margin:0; }
+  .rules-list li{ background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-bottom:8px; font-size:13.5px; line-height:1.5; }
+  .rules-list li b{ color:var(--gold); }
+  .rms-disclaimer{ font-size:11px; color:var(--text-soft); margin-top:16px; padding:10px 12px; background:var(--panel-soft); border-radius:8px; border:1px dashed var(--border); }
 </style>
 </head>
 <body>
@@ -154,6 +172,7 @@
 <div class="bottom-nav gated" id="bottomNav">
   <div class="bn-item active" data-nav="home"><span class="bn-icon">🏠</span><span class="bn-label">Home</span></div>
   <div class="bn-item" data-nav="search"><span class="bn-icon">🔍</span><span class="bn-label">Traders</span></div>
+  <div class="bn-item" data-nav="rms"><span class="bn-icon">📊</span><span class="bn-label">RMS</span></div>
   <div class="bn-item" data-nav="profile"><span class="bn-icon">👤</span><span class="bn-label">Profile</span></div>
 </div>
 
@@ -227,6 +246,7 @@ function nav(view, payload){
   else if(view==="search") renderSearch();
   else if(view==="profile") renderProfile();
   else if(view==="publicProfile") renderPublicProfile(payload);
+  else if(view==="rms") renderRMS();
 }
 function updateBottomNavActive(view){
   document.querySelectorAll(".bn-item").forEach(el => el.classList.toggle("active", el.dataset.nav === view));
@@ -438,6 +458,98 @@ async function renderPublicProfile(uid){
     await toggleFollow(uid, currentlyFollowing);
     renderPublicProfile(uid);
   });
+}
+
+/* ================= RMS CALCULATOR + RULES ================= */
+const SLF_RULES_1STEP = {
+  maxDailyLossPct: 4,
+  maxOverallDDPct: 8,
+  profitTargetPct: 8
+};
+
+const RULES_LIST = [
+  "<b>Max Daily Loss:</b> 4% of initial balance — recalculated every day at 5pm EST using the higher of your balance or equity.",
+  "<b>Max Overall Drawdown:</b> 8% of initial balance — this is STATIC, meaning it does NOT trail up with your profits.",
+  "<b>Profit Target:</b> 8% of initial balance to pass the 1-Step Challenge.",
+  "<b>Stop-Loss:</b> Mandatory within 5 minutes of opening a trade (funded phase). Recommended during challenge.",
+  "<b>EAs / Bots:</b> Not permitted on the 1-Step Challenge.",
+  "<b>News Trading:</b> Allowed at all times.",
+  "<b>Lot Size Consistency:</b> Max lot size ≤ your average +100% · Min lot size ≥ your average −75%.",
+  "<b>Profit Consistency:</b> No single trading day's profit should exceed 25% of your total profit.",
+  "<b>Copy Trading:</b> Only allowed for copying your own trades — copying other traders is not allowed.",
+  "<b>Trading Days:</b> No fixed minimum required to pass, per SLF's published 1-Step Challenge FAQ — always verify on your dashboard."
+];
+
+let rmsTab = "calc";
+function renderRMS(){
+  app.innerHTML = `
+    <h2 style="margin-bottom:14px;">📊 RMS — 1 Step Challenge</h2>
+    <div class="rms-tabs">
+      <div class="rms-tab ${rmsTab==='calc'?'active':''}" id="rmsTabCalc">Calculator</div>
+      <div class="rms-tab ${rmsTab==='rules'?'active':''}" id="rmsTabRules">Rules</div>
+    </div>
+    <div id="rmsContent"></div>
+  `;
+  document.getElementById("rmsTabCalc").addEventListener("click", () => { rmsTab="calc"; renderRMS(); });
+  document.getElementById("rmsTabRules").addEventListener("click", () => { rmsTab="rules"; renderRMS(); });
+  if(rmsTab === "calc") renderRMSCalculator();
+  else renderRMSRulesTab();
+}
+
+function renderRMSCalculator(){
+  const content = document.getElementById("rmsContent");
+  const defaultBalance = profile.accountSize || 100000;
+  content.innerHTML = `
+    <div class="section-block">
+      <label>Account Balance ($)</label>
+      <input type="number" id="rmsBalance" value="${defaultBalance}">
+      <label>Today's P&amp;L so far ($) — negative if in loss, e.g. -1200</label>
+      <input type="number" id="rmsTodayPL" value="0">
+      <label>Risk per trade (%)</label>
+      <input type="number" id="rmsRiskPct" value="1" step="0.25">
+      <button class="primary" id="rmsCalcBtn" style="width:100%;">Calculate</button>
+    </div>
+    <div id="rmsResults"></div>
+    <div class="rms-disclaimer">⚠️ This is a formula-based calculator using SLF's publicly documented 1-Step Challenge rules — not financial advice. Rule numbers can change; always confirm current limits on your SLF dashboard before trading.</div>
+  `;
+  document.getElementById("rmsCalcBtn").addEventListener("click", computeRMS);
+  computeRMS();
+}
+
+function computeRMS(){
+  const balance = parseFloat(document.getElementById("rmsBalance").value) || 0;
+  const todayPL = parseFloat(document.getElementById("rmsTodayPL").value) || 0;
+  const riskPct = parseFloat(document.getElementById("rmsRiskPct").value) || 1;
+
+  const maxDailyLoss = balance * (SLF_RULES_1STEP.maxDailyLossPct/100);
+  const maxOverallDD = balance * (SLF_RULES_1STEP.maxOverallDDPct/100);
+  const profitTarget = balance * (SLF_RULES_1STEP.profitTargetPct/100);
+  const lossUsedToday = todayPL < 0 ? Math.abs(todayPL) : 0;
+  const dailyLossRemaining = maxDailyLoss - lossUsedToday;
+  const suggestedRiskPerTrade = balance * (riskPct/100);
+  const floorEquity = balance - maxOverallDD;
+
+  const resultsEl = document.getElementById("rmsResults");
+  const breached = dailyLossRemaining <= 0;
+  resultsEl.innerHTML = `
+    <div class="rms-output">
+      <div class="out-card"><div class="lbl">Max Daily Loss</div><div class="val">$${maxDailyLoss.toLocaleString()}</div><div class="sub">4% of balance</div></div>
+      <div class="out-card ${dailyLossRemaining < maxDailyLoss*0.25 ? 'warn':''}"><div class="lbl">Daily Loss Remaining Today</div><div class="val">$${Math.max(0,dailyLossRemaining).toLocaleString()}</div><div class="sub">Used so far: $${lossUsedToday.toLocaleString()}</div></div>
+      <div class="out-card"><div class="lbl">Max Overall Drawdown</div><div class="val">$${maxOverallDD.toLocaleString()}</div><div class="sub">Static — equity floor: $${floorEquity.toLocaleString()}</div></div>
+      <div class="out-card"><div class="lbl">Profit Target to Pass</div><div class="val">$${profitTarget.toLocaleString()}</div><div class="sub">8% of balance</div></div>
+      <div class="out-card"><div class="lbl">Suggested Max Risk / Trade</div><div class="val">$${suggestedRiskPerTrade.toLocaleString()}</div><div class="sub">${riskPct}% of balance</div></div>
+      <div class="out-card"><div class="lbl">Trades Left Today (approx)</div><div class="val">${suggestedRiskPerTrade>0 ? Math.floor(Math.max(0,dailyLossRemaining)/suggestedRiskPerTrade) : "—"}</div><div class="sub">at this risk-per-trade size</div></div>
+    </div>
+    ${breached ? `<div class="breach-banner">🚨 Daily loss limit hit or exceeded — SLF rules likely consider this account breached for today. Stop trading.</div>` : ""}
+  `;
+}
+
+function renderRMSRulesTab(){
+  const content = document.getElementById("rmsContent");
+  content.innerHTML = `
+    <ul class="rules-list">${RULES_LIST.map(r => `<li>${r}</li>`).join("")}</ul>
+    <div class="rms-disclaimer">Source: SLF's publicly documented 1-Step Challenge rules. SLF's own rule pages have occasionally shown minor inconsistencies (per independent reviews) — treat this as a quick reference, not the final word. Always check your live SLF dashboard.</div>
+  `;
 }
 
 /* ================= IMAGE MODAL + LONG PRESS ================= */
