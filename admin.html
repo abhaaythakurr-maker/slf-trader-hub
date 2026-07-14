@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SLF Hub — Admin</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<style>
+  body{ font-family:-apple-system,sans-serif; background:#0A0E14; color:#E6E9EF; padding:24px; max-width:600px; margin:0 auto; }
+  h1{ color:#16C784; font-size:20px; }
+  .card{ background:#131822; border:1px solid #232A38; border-radius:12px; padding:18px; margin-bottom:16px; }
+  label{ display:block; font-size:12px; color:#7C8699; margin-bottom:4px; }
+  input{ width:100%; background:#0E131B; border:1px solid #232A38; color:#E6E9EF; padding:9px 10px; border-radius:7px; margin-bottom:12px; font-family:monospace; box-sizing:border-box; }
+  button{ background:#F0B90B; color:#0A0E14; border:none; padding:10px 16px; border-radius:8px; font-weight:600; cursor:pointer; }
+  button:hover{ filter:brightness(1.1); }
+  textarea{ width:100%; height:160px; background:#0E131B; border:1px solid #232A38; color:#16C784; padding:10px; border-radius:7px; font-family:monospace; font-size:13px; box-sizing:border-box; }
+  .stat{ font-family:monospace; font-size:13px; color:#7C8699; margin-top:8px; }
+  .msg{ font-size:12px; margin-top:10px; }
+</style>
+</head>
+<body>
+<h1>🔐 SLF Trader Hub — Admin</h1>
+
+<div class="card">
+  <label>Prefix</label>
+  <input id="prefix" value="SLF">
+  <label>Start number</label>
+  <input id="startNum" value="1" type="number">
+  <label>How many codes to generate</label>
+  <input id="count" value="5" type="number">
+  <button id="genBtn">Generate &amp; Save to Firestore</button>
+  <div class="msg" id="genMsg"></div>
+  <textarea id="output" placeholder="Generated codes will show here"></textarea>
+
+  <label>Custom code (apna khud ka naam)</label>
+  <input id="customCode" placeholder="jaise SLF-VIP1">
+  <button id="customBtn">Add This Code</button>
+  <div class="msg" id="customMsg"></div>
+</div>
+
+<div class="card">
+  <button id="statsBtn">Check Usage Stats</button>
+  <div class="stat" id="statsOut"></div>
+</div>
+
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyAPEgEmcs7_upeLU6vvaDmegRaQ0JqX9IE",
+  authDomain: "slf-trader-hub.firebaseapp.com",
+  projectId: "slf-trader-hub",
+  storageBucket: "slf-trader-hub.firebasestorage.app",
+  messagingSenderId: "77368939885",
+  appId: "1:77368939885:web:4378e56d208bbc1fd67664"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+document.getElementById("genBtn").addEventListener("click", async () => {
+  const prefix = document.getElementById("prefix").value.trim().toUpperCase() || "SLF";
+  const start = parseInt(document.getElementById("startNum").value, 10) || 1;
+  const count = parseInt(document.getElementById("count").value, 10) || 1;
+  const msg = document.getElementById("genMsg");
+  const out = document.getElementById("output");
+  msg.textContent = "Generating…";
+  const codes = [];
+  for(let i=0; i<count; i++){ codes.push(`${prefix}-${start+i}`); }
+  try{
+    const batch = db.batch();
+    codes.forEach(code => {
+      const ref = db.collection("codes").doc(code);
+      batch.set(ref, { used:false, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+    });
+    await batch.commit();
+    out.value = codes.join("\n");
+    msg.textContent = `✅ ${codes.length} codes created and saved.`;
+  }catch(e){ msg.textContent = "❌ Error: " + e.message; }
+});
+
+document.getElementById("customBtn").addEventListener("click", async () => {
+  const code = document.getElementById("customCode").value.trim().toUpperCase();
+  const msg = document.getElementById("customMsg");
+  if(!code){ msg.textContent = "Pehle koi naam type karo."; return; }
+  msg.textContent = "Adding…";
+  try{
+    const ref = db.collection("codes").doc(code);
+    const existing = await ref.get();
+    if(existing.exists){ msg.textContent = `⚠ '${code}' pehle se maujood hai.`; return; }
+    await ref.set({ used:false, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+    msg.textContent = `✅ Code '${code}' add ho gaya.`;
+    document.getElementById("customCode").value = "";
+  }catch(e){ msg.textContent = "❌ Error: " + e.message; }
+});
+
+document.getElementById("statsBtn").addEventListener("click", async () => {
+  const el = document.getElementById("statsOut");
+  el.textContent = "Loading…";
+  try{
+    const snap = await db.collection("codes").get();
+    let total = 0, used = 0;
+    snap.forEach(doc => { total++; if(doc.data().used) used++; });
+    el.textContent = `Total codes: ${total} · Used: ${used} · Remaining: ${total-used}`;
+  }catch(e){ el.textContent = "Error: " + e.message; }
+});
+</script>
+</body>
+</html>
