@@ -156,6 +156,17 @@
   .history-day .bar{ height:50px; border-radius:6px; background:var(--panel-soft); border:1px solid var(--border); display:flex; align-items:flex-end; overflow:hidden; }
   .history-day .bar-fill{ width:100%; background:var(--green); }
   .history-day .day-lbl{ font-size:10px; color:var(--text-soft); margin-top:4px; }
+
+  .ai-messages{ display:flex; flex-direction:column; gap:10px; margin-bottom:14px; min-height:40vh; }
+  .ai-bubble{ max-width:82%; padding:11px 15px; border-radius:14px; font-size:13.5px; line-height:1.55; white-space:pre-wrap; }
+  .ai-bubble.mine{ align-self:flex-end; background:var(--green); color:#06120D; border-bottom-right-radius:4px; }
+  .ai-bubble.theirs{ align-self:flex-start; background:var(--panel); border:1px solid var(--border); border-bottom-left-radius:4px; }
+  .ai-bubble.thinking{ color:var(--text-soft); font-style:italic; }
+  .ai-input-row{ display:flex; gap:8px; position:sticky; bottom:76px; }
+  .ai-input-row input{ flex:1; margin-bottom:0; }
+  .ai-suggestions{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
+  .ai-chip{ font-size:12px; background:var(--panel); border:1px solid var(--border); color:var(--text-soft); padding:7px 12px; border-radius:16px; cursor:pointer; }
+  .ai-chip:hover{ border-color:var(--green); color:var(--green); }
 </style>
 </head>
 <body>
@@ -194,6 +205,7 @@
   <div class="bn-item" data-nav="search"><span class="bn-icon">🔍</span><span class="bn-label">Traders</span></div>
   <div class="bn-item" data-nav="rms"><span class="bn-icon">📊</span><span class="bn-label">RMS</span></div>
   <div class="bn-item" data-nav="tracker"><span class="bn-icon">✅</span><span class="bn-label">Daily</span></div>
+  <div class="bn-item" data-nav="ai"><span class="bn-icon">🤖</span><span class="bn-label">AI</span></div>
   <div class="bn-item" data-nav="profile"><span class="bn-icon">👤</span><span class="bn-label">Profile</span></div>
 </div>
 
@@ -270,6 +282,7 @@ function nav(view, payload){
   else if(view==="publicProfile") renderPublicProfile(payload);
   else if(view==="rms") renderRMS();
   else if(view==="tracker") renderTracker();
+  else if(view==="ai") renderAI();
 }
 function updateBottomNavActive(view){
   document.querySelectorAll(".bn-item").forEach(el => el.classList.toggle("active", el.dataset.nav === view));
@@ -573,6 +586,107 @@ function renderRMSRulesTab(){
     <ul class="rules-list">${RULES_LIST.map(r => `<li>${r}</li>`).join("")}</ul>
     <div class="rms-disclaimer">Source: SLF's publicly documented 1-Step Challenge rules. SLF's own rule pages have occasionally shown minor inconsistencies (per independent reviews) — treat this as a quick reference, not the final word. Always check your live SLF dashboard.</div>
   `;
+}
+
+/* ================= AI ASSISTANT ================= */
+const SLF_KNOWLEDGE_BASE = `
+You are the AI assistant inside "SLF Trader Hub", a private community app for traders on Sure Leverage Funding (SLF).
+Only answer questions related to SLF's funded account rules, risk management, and this trader's own account. If asked something unrelated or something you're not confident about from the rules below, say so honestly and suggest they confirm with SLF support directly — never invent specific numbers you're not given here.
+
+=== SLF 1-STEP CHALLENGE RULES (source: SLF's public help center & schedule docs) ===
+- Max Daily Loss: 4% of initial balance. Recalculated daily at 5pm EST using the higher of balance or equity, minus 4% of initial balance.
+- Max Overall Drawdown: 8% of initial balance. This is STATIC — it does NOT trail upward with profit.
+- Profit Target: 8% of initial balance to pass the challenge (single phase, no minimum trading days required per SLF's FAQ, though this can vary — recommend the trader double check on their dashboard).
+- Stop-Loss: Mandatory within 5 minutes of opening any trade during the funded phase. Recommended (not mandatory) during the challenge phase. Fake stop-losses (set beyond daily/max drawdown) are prohibited.
+- EAs / Expert Advisors / bots: NOT permitted on the 1-Step Challenge.
+- News trading: Allowed at all times.
+- Lot Size Consistency: Max lot size must not exceed your average lot size +100%. Min lot size must not be below your average -75%. Trades in the same direction/pair opened close together count as one "Trade Idea".
+- Profit Consistency: No single trading day's profit should equal or exceed 25% of your total profit for the payout period.
+- Copy Trading: Allowed only for copying your OWN trades to your SLF account. Copying other traders' trades is not allowed.
+- Payouts: Instant payout requests available; processing covered by a 24-hour guarantee (extra 10% profit split bonus if delayed). Standard profit split starts around 80%, can scale higher.
+- Known caveat: SLF's own published rule pages have shown some inconsistencies across different articles (per independent reviews) — always tell the trader to verify exact current numbers on their live SLF dashboard for anything payout or breach-critical.
+
+Keep answers short, practical, and specific to their account numbers when given. Do not give generic "financial advice" like predicting the market — you're a rules/risk assistant, not a trading signal provider.
+`;
+
+let aiChatHistory = [];
+
+function renderAI(){
+  const balanceInfo = profile.accountSize ? `$${profile.accountSize} (${profile.accountType || "type not set"}, started ${profile.startDate || "date not set"})` : "not set yet — tell them to fill it in their Profile for personalized answers";
+  app.innerHTML = `
+    <h2 style="margin-bottom:6px;">🤖 SLF Rules Assistant</h2>
+    <p style="font-size:12px; color:var(--text-soft); margin-bottom:14px;">Apne account (${profile.accountSize ? '$'+profile.accountSize : 'account details profile me daalo'}) ke rules ke baare me kuch bhi pucho.</p>
+    <div class="ai-suggestions">
+      <div class="ai-chip" data-q="Aaj maine $2000 loss kar liya, kya main aur trade kar sakta hoon?">Aaj $2000 loss ho gaya, aage trade karu?</div>
+      <div class="ai-chip" data-q="Max drawdown breach hone se kya hota hai?">Max drawdown breach hone se kya hota hai?</div>
+      <div class="ai-chip" data-q="Kya main is challenge me EA use kar sakta hoon?">EA use kar sakta hoon kya?</div>
+    </div>
+    <div class="ai-messages" id="aiMessages"></div>
+    <div class="ai-input-row">
+      <input type="text" id="aiInput" placeholder="Apna sawal likho...">
+      <button class="primary" id="aiSendBtn">Send</button>
+    </div>
+  `;
+  renderAIMessages();
+  document.querySelectorAll(".ai-chip").forEach(chip => {
+    chip.addEventListener("click", () => { document.getElementById("aiInput").value = chip.dataset.q; sendAIMessage(); });
+  });
+  document.getElementById("aiSendBtn").addEventListener("click", sendAIMessage);
+  document.getElementById("aiInput").addEventListener("keydown", (e) => { if(e.key==="Enter") sendAIMessage(); });
+}
+
+function renderAIMessages(){
+  const el = document.getElementById("aiMessages");
+  if(!el) return;
+  el.innerHTML = "";
+  if(aiChatHistory.length === 0){
+    el.innerHTML = `<div class="ai-bubble theirs">👋 Hey ${profile.username}! Mujhse apne SLF 1-Step Challenge account ke rules, daily loss limit, drawdown, ya risk se juda kuch bhi pucho.</div>`;
+    return;
+  }
+  aiChatHistory.forEach(m => {
+    const bubble = document.createElement("div");
+    bubble.className = "ai-bubble " + (m.role === "user" ? "mine" : "theirs");
+    bubble.textContent = m.content;
+    el.appendChild(bubble);
+  });
+  el.scrollTop = el.scrollHeight;
+}
+
+async function sendAIMessage(){
+  const input = document.getElementById("aiInput");
+  const text = input.value.trim();
+  if(!text) return;
+  input.value = "";
+  aiChatHistory.push({ role:"user", content:text });
+  renderAIMessages();
+
+  const el = document.getElementById("aiMessages");
+  const thinkingBubble = document.createElement("div");
+  thinkingBubble.className = "ai-bubble theirs thinking";
+  thinkingBubble.textContent = "Typing…";
+  el.appendChild(thinkingBubble);
+  el.scrollTop = el.scrollHeight;
+
+  const accountContext = `\nThis trader's account: username=${profile.username}, accountSize=${profile.accountSize||"not set"}, accountType=${profile.accountType||"not set"}, challengeStartDate=${profile.startDate||"not set"}.`;
+
+  try{
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 700,
+        system: SLF_KNOWLEDGE_BASE + accountContext,
+        messages: aiChatHistory.map(m => ({ role: m.role, content: m.content }))
+      })
+    });
+    const data = await response.json();
+    const replyText = (data.content || []).map(c => c.text || "").join("\n") || "Sorry, kuch gadbad ho gayi. Dobara try karo.";
+    aiChatHistory.push({ role:"assistant", content: replyText });
+  }catch(e){
+    aiChatHistory.push({ role:"assistant", content: "⚠️ Connection error — dobara try karo." });
+  }
+  renderAIMessages();
 }
 
 /* ================= DAILY TRACKER ================= */
