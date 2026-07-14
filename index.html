@@ -136,6 +136,26 @@
   .rules-list li{ background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-bottom:8px; font-size:13.5px; line-height:1.5; }
   .rules-list li b{ color:var(--gold); }
   .rms-disclaimer{ font-size:11px; color:var(--text-soft); margin-top:16px; padding:10px 12px; background:var(--panel-soft); border-radius:8px; border:1px dashed var(--border); }
+
+  .tracker-section{ margin-bottom:22px; }
+  .tracker-head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .tracker-head h4{ font-size:12px; text-transform:uppercase; letter-spacing:0.6px; color:var(--gold); margin:0; }
+  .tracker-pct{ font-family:var(--font-mono); font-size:12px; color:var(--green); }
+  .tracker-item{ display:flex; align-items:center; gap:10px; background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:10px 14px; margin-bottom:6px; }
+  .tracker-item.done{ border-color:var(--green); background:var(--green-soft); }
+  .tracker-item input[type="checkbox"]{ width:18px; height:18px; accent-color:var(--green); cursor:pointer; flex-shrink:0; }
+  .tracker-item span.item-text{ flex:1; font-size:13.5px; }
+  .tracker-item.done span.item-text{ color:var(--green); }
+  .tracker-item .del-x{ color:var(--text-soft); cursor:pointer; font-size:14px; flex-shrink:0; }
+  .tracker-item .del-x:hover{ color:var(--red); }
+  .add-item-row{ display:flex; gap:8px; margin-top:8px; }
+  .add-item-row input{ flex:1; margin-bottom:0; }
+  .add-item-row button{ flex-shrink:0; padding:10px 16px; }
+  .history-strip{ display:flex; gap:6px; margin-bottom:24px; }
+  .history-day{ flex:1; text-align:center; }
+  .history-day .bar{ height:50px; border-radius:6px; background:var(--panel-soft); border:1px solid var(--border); display:flex; align-items:flex-end; overflow:hidden; }
+  .history-day .bar-fill{ width:100%; background:var(--green); }
+  .history-day .day-lbl{ font-size:10px; color:var(--text-soft); margin-top:4px; }
 </style>
 </head>
 <body>
@@ -173,13 +193,14 @@
   <div class="bn-item active" data-nav="home"><span class="bn-icon">🏠</span><span class="bn-label">Home</span></div>
   <div class="bn-item" data-nav="search"><span class="bn-icon">🔍</span><span class="bn-label">Traders</span></div>
   <div class="bn-item" data-nav="rms"><span class="bn-icon">📊</span><span class="bn-label">RMS</span></div>
+  <div class="bn-item" data-nav="tracker"><span class="bn-icon">✅</span><span class="bn-label">Daily</span></div>
   <div class="bn-item" data-nav="profile"><span class="bn-icon">👤</span><span class="bn-label">Profile</span></div>
 </div>
 
 <script>
 /* ================= STATE ================= */
 let currentUser = null;
-let profile = { username:"", bio:"", photoBase64:null, following:[], followers:[], accountSize:null, accountType:"", startDate:"" };
+let profile = { username:"", bio:"", photoBase64:null, following:[], followers:[], accountSize:null, accountType:"", startDate:"", goalItems:[], ruleItems:[], habitItems:[] };
 let allTradersCache = null;
 
 const ACCOUNT_TYPES = ["1 Step Challenge", "2 Step Challenge", "Instant Funding"];
@@ -207,7 +228,8 @@ async function loadProfile(){
       profile = {
         username: d.username||"", bio: d.bio||"", photoBase64: d.photoBase64||null,
         following: d.following||[], followers: d.followers||[],
-        accountSize: d.accountSize||null, accountType: d.accountType||"", startDate: d.startDate||""
+        accountSize: d.accountSize||null, accountType: d.accountType||"", startDate: d.startDate||"",
+        goalItems: d.goalItems||[], ruleItems: d.ruleItems||[], habitItems: d.habitItems||[]
       };
     }
   }catch(e){}
@@ -247,6 +269,7 @@ function nav(view, payload){
   else if(view==="profile") renderProfile();
   else if(view==="publicProfile") renderPublicProfile(payload);
   else if(view==="rms") renderRMS();
+  else if(view==="tracker") renderTracker();
 }
 function updateBottomNavActive(view){
   document.querySelectorAll(".bn-item").forEach(el => el.classList.toggle("active", el.dataset.nav === view));
@@ -552,6 +575,135 @@ function renderRMSRulesTab(){
   `;
 }
 
+/* ================= DAILY TRACKER ================= */
+function todayDateStr(){
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function dateStrDaysAgo(n){
+  const d = new Date();
+  d.setDate(d.getDate()-n);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function genId(){ return Math.random().toString(36).slice(2,10); }
+
+let todayLog = { goals:{}, rules:{}, habits:{} };
+
+async function loadTodayLog(){
+  const docId = `${currentUser.uid}_${todayDateStr()}`;
+  try{
+    const snap = await db.collection("dailyLogs").doc(docId).get();
+    if(snap.exists){
+      const d = snap.data();
+      todayLog = { goals: d.goals||{}, rules: d.rules||{}, habits: d.habits||{} };
+    } else {
+      todayLog = { goals:{}, rules:{}, habits:{} };
+    }
+  }catch(e){ todayLog = { goals:{}, rules:{}, habits:{} }; }
+}
+async function toggleLogItem(category, itemId, checked){
+  todayLog[category][itemId] = checked;
+  const docId = `${currentUser.uid}_${todayDateStr()}`;
+  try{
+    await db.collection("dailyLogs").doc(docId).set({
+      uid: currentUser.uid, date: todayDateStr(),
+      [category]: todayLog[category]
+    }, { merge: true });
+  }catch(e){}
+}
+async function addTrackerItem(category, arrayKey){
+  const inputId = `newItem-${category}`;
+  const input = document.getElementById(inputId);
+  const text = input.value.trim();
+  if(!text) return;
+  profile[arrayKey].push({ id: genId(), text });
+  input.value = "";
+  try{ await db.collection("traders").doc(currentUser.uid).update({ [arrayKey]: profile[arrayKey] }); }catch(e){}
+  renderTracker();
+}
+async function deleteTrackerItem(arrayKey, itemId){
+  profile[arrayKey] = profile[arrayKey].filter(i => i.id !== itemId);
+  try{ await db.collection("traders").doc(currentUser.uid).update({ [arrayKey]: profile[arrayKey] }); }catch(e){}
+  renderTracker();
+}
+
+function trackerSectionHtml(title, category, arrayKey){
+  const items = profile[arrayKey] || [];
+  const doneCount = items.filter(i => todayLog[category][i.id]).length;
+  const pct = items.length ? Math.round((doneCount/items.length)*100) : 0;
+  return `
+    <div class="tracker-section">
+      <div class="tracker-head"><h4>${title}</h4><span class="tracker-pct">${doneCount}/${items.length} · ${pct}%</span></div>
+      ${items.length === 0 ? `<p style="font-size:12px;color:var(--text-soft);">Koi item nahi hai — neeche add karo.</p>` : ""}
+      ${items.map(i => `
+        <div class="tracker-item ${todayLog[category][i.id] ? 'done' : ''}">
+          <input type="checkbox" data-cat="${category}" data-id="${i.id}" ${todayLog[category][i.id] ? "checked" : ""}>
+          <span class="item-text">${i.text}</span>
+          <span class="del-x" data-delkey="${arrayKey}" data-delid="${i.id}">✕</span>
+        </div>
+      `).join("")}
+      <div class="add-item-row">
+        <input type="text" id="newItem-${category}" placeholder="Naya item add karo...">
+        <button class="ghost" data-addcat="${category}" data-addkey="${arrayKey}">+ Add</button>
+      </div>
+    </div>
+  `;
+}
+
+async function renderTracker(){
+  app.innerHTML = `<h2 style="margin-bottom:14px;">✅ Daily Tracker</h2><p style="color:var(--text-soft); font-size:13px;">Loading…</p>`;
+  await loadTodayLog();
+
+  const historyDates = [6,5,4,3,2,1,0].map(n => dateStrDaysAgo(n));
+  let historyData = [];
+  try{
+    const snap = await db.collection("dailyLogs").where("uid","==",currentUser.uid).where("date","in",historyDates).get();
+    const byDate = {};
+    snap.forEach(doc => { byDate[doc.data().date] = doc.data(); });
+    const totalItems = (profile.goalItems||[]).length + (profile.ruleItems||[]).length + (profile.habitItems||[]).length;
+    historyData = historyDates.map(date => {
+      const d = byDate[date];
+      if(!d || totalItems === 0) return { date, pct: 0 };
+      const done = Object.values(d.goals||{}).filter(Boolean).length + Object.values(d.rules||{}).filter(Boolean).length + Object.values(d.habits||{}).filter(Boolean).length;
+      return { date, pct: Math.round((done/totalItems)*100) };
+    });
+  }catch(e){
+    historyData = historyDates.map(date => ({ date, pct: 0 }));
+  }
+
+  app.innerHTML = `
+    <h2 style="margin-bottom:6px;">✅ Daily Tracker</h2>
+    <p style="font-size:12px; color:var(--text-soft); margin-bottom:16px;">Har raat 12 baje naya khaali din shuru hota hai — purana record safe rehta hai.</p>
+    <div class="history-strip" id="historyStrip"></div>
+    ${trackerSectionHtml("🎯 Daily Goals", "goals", "goalItems")}
+    ${trackerSectionHtml("📜 Rules Followed", "rules", "ruleItems")}
+    ${trackerSectionHtml("🔁 Habits", "habits", "habitItems")}
+  `;
+
+  const historyEl = document.getElementById("historyStrip");
+  const dayLabels = ["S","M","T","W","T","F","S"];
+  historyData.forEach(h => {
+    const dayIdx = new Date(h.date + "T00:00:00").getDay();
+    const col = document.createElement("div");
+    col.className = "history-day";
+    col.innerHTML = `<div class="bar"><div class="bar-fill" style="height:${h.pct}%;"></div></div><div class="day-lbl">${dayLabels[dayIdx]}</div>`;
+    historyEl.appendChild(col);
+  });
+
+  app.querySelectorAll('input[type="checkbox"][data-cat]').forEach(box => {
+    box.addEventListener("change", async (e) => {
+      await toggleLogItem(e.target.dataset.cat, e.target.dataset.id, e.target.checked);
+      renderTracker();
+    });
+  });
+  app.querySelectorAll(".del-x").forEach(el => {
+    el.addEventListener("click", () => deleteTrackerItem(el.dataset.delkey, el.dataset.delid));
+  });
+  app.querySelectorAll("[data-addcat]").forEach(btn => {
+    btn.addEventListener("click", () => addTrackerItem(btn.dataset.addcat, btn.dataset.addkey));
+  });
+}
+
 /* ================= IMAGE MODAL + LONG PRESS ================= */
 function showImageModal(base64){
   if(!base64) return;
@@ -636,6 +788,7 @@ async function handleGateSubmit(){
         username, bio:"", photoBase64:null,
         following:[], followers:[],
         accountSize:null, accountType:"", startDate:"",
+        goalItems:[], ruleItems:[], habitItems:[],
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
       });
       await codeRef.update({ used:true, usedBy: cred.user.uid, usedAt: firebase.firestore.FieldValue.serverTimestamp() });
