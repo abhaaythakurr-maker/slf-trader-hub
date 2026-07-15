@@ -303,6 +303,30 @@ let allTradersCache = null;
 
 const ACCOUNT_TYPES = ["1 Step Challenge", "2 Step Challenge", "Instant Funding"];
 
+const DEFAULT_GOALS = [
+  "Journal every trade taken today",
+  "Stick to my max risk per trade",
+  "No revenge trading after a loss",
+  "Check economic calendar before trading",
+  "Screenshot every entry & exit"
+];
+const DEFAULT_RULES = [
+  "Set stop-loss within 5 minutes of entry",
+  "Didn't exceed max daily loss",
+  "No EA / bot used",
+  "Lot size within consistency range",
+  "No trading below equity floor"
+];
+const DEFAULT_HABITS = [
+  "Slept 7+ hours last night",
+  "Reviewed yesterday's trades",
+  "No trading while emotionally stressed",
+  "Did a quick breathing/meditation before session",
+  "Exercised or moved my body today"
+];
+function genId(){ return Math.random().toString(36).slice(2,10); }
+function withIds(list){ return list.map(text => ({ id: genId(), text })); }
+
 /* ================= FIREBASE ================= */
 const firebaseConfig = {
   apiKey: "AIzaSyAPEgEmcs7_upeLU6vvaDmegRaQ0JqX9IE",
@@ -914,6 +938,7 @@ function trackerSectionHtml(title, category, arrayKey){
         <input type="text" id="newItem-${category}" placeholder="Naya item add karo...">
         <button class="ghost" data-addcat="${category}" data-addkey="${arrayKey}">+ Add</button>
       </div>
+      <button class="ghost" style="margin-top:10px; width:100%;" data-suggestcat="${category}" data-suggestkey="${arrayKey}">✨ Load Suggested Items</button>
     </div>
   `;
 }
@@ -1003,6 +1028,19 @@ async function renderTrackerPage(category, arrayKey, icon, title){
   app.querySelectorAll("[data-addcat]").forEach(btn => {
     btn.addEventListener("click", () => addTrackerItemOnPage(btn.dataset.addcat, btn.dataset.addkey, category, arrayKey, icon, title));
   });
+  const suggestBtn = app.querySelector("[data-suggestcat]");
+  if(suggestBtn){
+    suggestBtn.addEventListener("click", () => loadSuggestedItems(category, arrayKey, icon, title));
+  }
+}
+const DEFAULTS_MAP = { goals: DEFAULT_GOALS, rules: DEFAULT_RULES, habits: DEFAULT_HABITS };
+async function loadSuggestedItems(category, arrayKey, icon, title){
+  const existingTexts = (profile[arrayKey]||[]).map(i => i.text.toLowerCase());
+  const toAdd = DEFAULTS_MAP[category].filter(t => !existingTexts.includes(t.toLowerCase()));
+  if(toAdd.length === 0){ renderTrackerPage(category, arrayKey, icon, title); return; }
+  profile[arrayKey] = profile[arrayKey].concat(withIds(toAdd));
+  try{ await db.collection("traders").doc(currentUser.uid).update({ [arrayKey]: profile[arrayKey] }); }catch(e){}
+  renderTrackerPage(category, arrayKey, icon, title);
 }
 async function addTrackerItemOnPage(cat, arrayKey, category, ak, icon, title){
   await addTrackerItemSilent(cat, arrayKey);
@@ -1097,7 +1135,7 @@ async function handleGateSubmit(){
         username, bio:"", photoBase64:null,
         following:[], followers:[],
         accountSize:null, accountType:"", startDate:"",
-        goalItems:[], ruleItems:[], habitItems:[],
+        goalItems: withIds(DEFAULT_GOALS), ruleItems: withIds(DEFAULT_RULES), habitItems: withIds(DEFAULT_HABITS),
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
       });
       await codeRef.update({ used:true, usedBy: cred.user.uid, usedAt: firebase.firestore.FieldValue.serverTimestamp() });
