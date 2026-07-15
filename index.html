@@ -588,31 +588,110 @@ function renderRMSRulesTab(){
   `;
 }
 
-/* ================= AI ASSISTANT ================= */
-const SLF_KNOWLEDGE_BASE = `
-You are the AI assistant inside "SLF Trader Hub", a private community app for traders on Sure Leverage Funding (SLF).
-Only answer questions related to SLF's funded account rules, risk management, and this trader's own account. If asked something unrelated or something you're not confident about from the rules below, say so honestly and suggest they confirm with SLF support directly — never invent specific numbers you're not given here.
+/* ================= AI ASSISTANT (rule-based, free, no API) ================= */
+function fmtMoney(n){ return "$" + Math.round(n).toLocaleString(); }
 
-=== SLF 1-STEP CHALLENGE RULES (source: SLF's public help center & schedule docs) ===
-- Max Daily Loss: 4% of initial balance. Recalculated daily at 5pm EST using the higher of balance or equity, minus 4% of initial balance.
-- Max Overall Drawdown: 8% of initial balance. This is STATIC — it does NOT trail upward with profit.
-- Profit Target: 8% of initial balance to pass the challenge (single phase, no minimum trading days required per SLF's FAQ, though this can vary — recommend the trader double check on their dashboard).
-- Stop-Loss: Mandatory within 5 minutes of opening any trade during the funded phase. Recommended (not mandatory) during the challenge phase. Fake stop-losses (set beyond daily/max drawdown) are prohibited.
-- EAs / Expert Advisors / bots: NOT permitted on the 1-Step Challenge.
-- News trading: Allowed at all times.
-- Lot Size Consistency: Max lot size must not exceed your average lot size +100%. Min lot size must not be below your average -75%. Trades in the same direction/pair opened close together count as one "Trade Idea".
-- Profit Consistency: No single trading day's profit should equal or exceed 25% of your total profit for the payout period.
-- Copy Trading: Allowed only for copying your OWN trades to your SLF account. Copying other traders' trades is not allowed.
-- Payouts: Instant payout requests available; processing covered by a 24-hour guarantee (extra 10% profit split bonus if delayed). Standard profit split starts around 80%, can scale higher.
-- Known caveat: SLF's own published rule pages have shown some inconsistencies across different articles (per independent reviews) — always tell the trader to verify exact current numbers on their live SLF dashboard for anything payout or breach-critical.
+function extractNumber(text){
+  const m = text.replace(/,/g,"").match(/(\d+(\.\d+)?)/);
+  return m ? parseFloat(m[1]) : null;
+}
 
-Keep answers short, practical, and specific to their account numbers when given. Do not give generic "financial advice" like predicting the market — you're a rules/risk assistant, not a trading signal provider.
-`;
+const BOT_TOPICS = [
+  {
+    key: "dailyloss",
+    keywords: ["daily loss","daily limit","loss today","lost today","aur trade","more trade","can i trade","trade karu"],
+    reply: (text) => {
+      const balance = profile.accountSize || 100000;
+      const maxDailyLoss = balance * 0.04;
+      const lossAmt = extractNumber(text);
+      let out = `📉 Max Daily Loss on your $${balance.toLocaleString()} account is ${fmtMoney(maxDailyLoss)} (4%).`;
+      if(lossAmt !== null){
+        const remaining = maxDailyLoss - lossAmt;
+        if(remaining <= 0){
+          out += `\n\n🚨 Tumne ${fmtMoney(lossAmt)} loss bataya — ye daily limit se zyada/barabar hai. Aaj ke liye trading ROK DO, warna breach ho sakta hai.`;
+        } else {
+          out += `\n\nTumne ${fmtMoney(lossAmt)} loss bataya, to aaj ke liye ${fmtMoney(remaining)} ka buffer bacha hai. Chhote size me hi trade karo, buffer khatam hone se pehle ruk jao.`;
+        }
+      } else {
+        out += `\n\nApna aaj ka loss amount bata do (jaise "aaj $1500 loss hua") to main exact buffer nikal ke bata dunga.`;
+      }
+      return out;
+    }
+  },
+  {
+    key: "drawdown",
+    keywords: ["drawdown","overall loss","account blown","blown","max loss","dd "],
+    reply: () => {
+      const balance = profile.accountSize || 100000;
+      const maxDD = balance * 0.08;
+      const floor = balance - maxDD;
+      return `📊 Max Overall Drawdown is ${fmtMoney(maxDD)} (8% of your $${balance.toLocaleString()} account) — this is STATIC, it does NOT move up with your profits.\n\nYour equity should never fall below ${fmtMoney(floor)}, no matter how much profit you've made.`;
+    }
+  },
+  {
+    key: "profittarget",
+    keywords: ["profit target","pass challenge","how much profit","target hit","target kitna"],
+    reply: () => {
+      const balance = profile.accountSize || 100000;
+      const target = balance * 0.08;
+      return `🎯 Profit Target to pass the 1-Step Challenge is ${fmtMoney(target)} (8% of your $${balance.toLocaleString()} account). No fixed minimum trading days required per SLF's published FAQ — but double-check your dashboard, as this can vary.`;
+    }
+  },
+  {
+    key: "stoploss",
+    keywords: ["stop loss","stoploss","sl ", " sl"],
+    reply: () => `🛑 Stop-loss is mandatory within 5 minutes of opening a trade during the FUNDED phase (recommended but not mandatory during the challenge). Fake stop-losses set way beyond your drawdown limit are not allowed.`
+  },
+  {
+    key: "ea",
+    keywords: ["ea","bot","expert advisor","algo","automated"],
+    reply: () => `🤖 EAs / Expert Advisors / bots are NOT permitted on the 1-Step Challenge. Stick to manual or semi-manual trading.`
+  },
+  {
+    key: "news",
+    keywords: ["news trad","nfp","fomc","news event"],
+    reply: () => `📰 News trading is allowed at all times on SLF's 1-Step Challenge — no restriction during high-impact news.`
+  },
+  {
+    key: "lotsize",
+    keywords: ["lot size","lot consistency","max lot","min lot"],
+    reply: () => `📐 Lot Size Consistency rule: your max lot size can't exceed your average +100%, and your min lot size can't be below your average -75%. Trades opened close together in the same pair/direction count as one "Trade Idea".`
+  },
+  {
+    key: "consistency",
+    keywords: ["consistency","single day profit","25%"],
+    reply: () => `⚖️ Profit Consistency rule: no single trading day's profit should be ≥25% of your total profit for the payout period. Spread your gains across multiple days.`
+  },
+  {
+    key: "copytrading",
+    keywords: ["copy trad","copier","mirror trade"],
+    reply: () => `📋 Copy trading is only allowed for copying YOUR OWN trades to your SLF account — copying signals/trades from other traders is not allowed.`
+  },
+  {
+    key: "payout",
+    keywords: ["payout","withdraw","profit split"],
+    reply: () => `💰 SLF offers instant payout requests with a 24-hour processing guarantee (extra 10% profit split bonus if delayed beyond that). Standard profit split starts around 80% and can scale higher — check your dashboard for your current split.`
+  },
+  {
+    key: "breach",
+    keywords: ["breach","failed","account closed","terminated","account band"],
+    reply: () => `⚠️ If you breach the max daily loss or max overall drawdown, SLF typically closes/fails that account immediately. There's usually no way to "undo" a breach — the safest move is to always stop trading before hitting your daily loss buffer. Check your SLF dashboard for their exact breach/appeal policy.`
+  }
+];
+
+function generateBotReply(userText){
+  const lower = userText.toLowerCase();
+  for(const topic of BOT_TOPICS){
+    if(topic.keywords.some(k => lower.includes(k))){
+      return topic.reply(userText);
+    }
+  }
+  return `Mujhe pura yakeen nahi is sawal ka — but main in topics me help kar sakta hoon: daily loss limit, max drawdown, profit target, stop-loss rule, EA rules, news trading, lot size consistency, profit consistency, copy trading, payouts, ya breach hone par kya hota hai. Inme se koi ek try karo, ya SLF support se confirm kar lo.`;
+}
 
 let aiChatHistory = [];
 
 function renderAI(){
-  const balanceInfo = profile.accountSize ? `$${profile.accountSize} (${profile.accountType || "type not set"}, started ${profile.startDate || "date not set"})` : "not set yet — tell them to fill it in their Profile for personalized answers";
   app.innerHTML = `
     <h2 style="margin-bottom:6px;">🤖 SLF Rules Assistant</h2>
     <p style="font-size:12px; color:var(--text-soft); margin-bottom:14px;">Apne account (${profile.accountSize ? '$'+profile.accountSize : 'account details profile me daalo'}) ke rules ke baare me kuch bhi pucho.</p>
@@ -652,7 +731,7 @@ function renderAIMessages(){
   el.scrollTop = el.scrollHeight;
 }
 
-async function sendAIMessage(){
+function sendAIMessage(){
   const input = document.getElementById("aiInput");
   const text = input.value.trim();
   if(!text) return;
@@ -667,26 +746,11 @@ async function sendAIMessage(){
   el.appendChild(thinkingBubble);
   el.scrollTop = el.scrollHeight;
 
-  const accountContext = `\nThis trader's account: username=${profile.username}, accountSize=${profile.accountSize||"not set"}, accountType=${profile.accountType||"not set"}, challengeStartDate=${profile.startDate||"not set"}.`;
-
-  try{
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 700,
-        system: SLF_KNOWLEDGE_BASE + accountContext,
-        messages: aiChatHistory.map(m => ({ role: m.role, content: m.content }))
-      })
-    });
-    const data = await response.json();
-    const replyText = (data.content || []).map(c => c.text || "").join("\n") || "Sorry, kuch gadbad ho gayi. Dobara try karo.";
-    aiChatHistory.push({ role:"assistant", content: replyText });
-  }catch(e){
-    aiChatHistory.push({ role:"assistant", content: "⚠️ Connection error — dobara try karo." });
-  }
-  renderAIMessages();
+  setTimeout(() => {
+    const reply = generateBotReply(text);
+    aiChatHistory.push({ role:"assistant", content: reply });
+    renderAIMessages();
+  }, 400);
 }
 
 /* ================= DAILY TRACKER ================= */
