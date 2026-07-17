@@ -281,6 +281,10 @@
     <svg viewBox="0 0 24 24"><path d="M4 19V9"/><path d="M11 19V4"/><path d="M18 19v-7"/><path d="M2.5 19h19"/></svg>
     <span class="rail-lbl">RMS</span>
   </div>
+  <div class="rail-item" data-nav="leaderboard">
+    <svg viewBox="0 0 24 24"><path d="M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M7 6H4.5A1.5 1.5 0 0 0 3 7.5 3.5 3.5 0 0 0 6.5 11"/><path d="M17 6h2.5A1.5 1.5 0 0 1 21 7.5 3.5 3.5 0 0 1 17.5 11"/><path d="M12 14v4"/><path d="M9 20h6"/></svg>
+    <span class="rail-lbl">Rank</span>
+  </div>
   <div class="rail-item" data-nav="trackerHub">
     <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8.5 12.5l2 2 5-5"/></svg>
     <span class="rail-lbl">Daily</span>
@@ -298,7 +302,7 @@
 <script>
 /* ================= STATE ================= */
 let currentUser = null;
-let profile = { username:"", bio:"", photoBase64:null, following:[], followers:[], accountSize:null, accountType:"", startDate:"", goalItems:[], ruleItems:[], habitItems:[] };
+let profile = { username:"", bio:"", photoBase64:null, following:[], followers:[], accountSize:null, accountType:"", startDate:"", goalItems:[], ruleItems:[], habitItems:[], runningEquity:null, totalPnl:0 };
 let allTradersCache = null;
 
 const ACCOUNT_TYPES = ["1 Step Challenge", "2 Step Challenge", "Instant Funding"];
@@ -351,7 +355,8 @@ async function loadProfile(){
         username: d.username||"", bio: d.bio||"", photoBase64: d.photoBase64||null,
         following: d.following||[], followers: d.followers||[],
         accountSize: d.accountSize||null, accountType: d.accountType||"", startDate: d.startDate||"",
-        goalItems: d.goalItems||[], ruleItems: d.ruleItems||[], habitItems: d.habitItems||[]
+        goalItems: d.goalItems||[], ruleItems: d.ruleItems||[], habitItems: d.habitItems||[],
+        runningEquity: (d.runningEquity !== undefined) ? d.runningEquity : null, totalPnl: d.totalPnl||0
       };
     }
   }catch(e){}
@@ -382,6 +387,30 @@ async function getTraderByUid(uid){
   return null;
 }
 
+/* ---------- DAILY P&L ---------- */
+function todayKey(){ return `${currentUser.uid}_${todayDateStr()}`; }
+async function getTodayPnl(){
+  try{
+    const snap = await db.collection("dailyLogs").doc(todayKey()).get();
+    if(snap.exists && typeof snap.data().pnl === "number") return snap.data().pnl;
+  }catch(e){}
+  return null;
+}
+async function logTodayPnl(newAmount){
+  const oldAmount = (await getTodayPnl()) || 0;
+  const delta = newAmount - oldAmount;
+  try{
+    await db.collection("dailyLogs").doc(todayKey()).set({
+      uid: currentUser.uid, date: todayDateStr(), pnl: newAmount
+    }, { merge: true });
+    const newEquity = (profile.runningEquity ?? profile.accountSize ?? 0) + delta;
+    const newTotalPnl = (profile.totalPnl || 0) + delta;
+    await db.collection("traders").doc(currentUser.uid).update({ runningEquity: newEquity, totalPnl: newTotalPnl });
+    profile.runningEquity = newEquity;
+    profile.totalPnl = newTotalPnl;
+  }catch(e){}
+}
+
 /* ================= ROUTER ================= */
 const app = document.getElementById("app");
 function nav(view, payload){
@@ -391,6 +420,7 @@ function nav(view, payload){
   else if(view==="profile") renderProfile();
   else if(view==="publicProfile") renderPublicProfile(payload);
   else if(view==="rms") renderRMS();
+  else if(view==="leaderboard") renderLeaderboard();
   else if(view==="trackerHub") renderTrackerHub();
   else if(view==="goals") renderTrackerPage("goals","goalItems","🎯","Daily Goals");
   else if(view==="rules") renderTrackerPage("rules","ruleItems","📜","Rules Followed");
@@ -408,6 +438,10 @@ document.querySelectorAll(".rail-item").forEach(el => el.addEventListener("click
 
 /* ================= HOME ================= */
 async function renderHome(){
+  const todayPnl = profile.accountSize ? await getTodayPnl() : null;
+  const equity = profile.runningEquity !== null ? profile.runningEquity : profile.accountSize;
+  const pctGain = (profile.accountSize && equity !== null) ? ((equity - profile.accountSize)/profile.accountSize*100) : null;
+
   app.innerHTML = `
     <div class="home-header">
       <h1>⚡ SLF TRADER HUB</h1>
@@ -416,16 +450,36 @@ async function renderHome(){
     <div class="section-block">
       <h4>Your Account</h4>
       <div class="trade-stats">
-        <div class="stat-card"><div class="lbl">Account Size</div><div class="val">${profile.accountSize ? "$"+profile.accountSize : "—"}</div></div>
-        <div class="stat-card"><div class="lbl">Type</div><div class="val" style="font-size:13px;">${profile.accountType || "—"}</div></div>
-        <div class="stat-card"><div class="lbl">Start Date</div><div class="val" style="font-size:13px;">${profile.startDate || "—"}</div></div>
+        <div class="stat-card"><div class="lbl">Account Size</div><div class="val">${profile.accountSize ? "$"+profile.accountSize.toLocaleString() : "—"}</div></div>
+        <div class="stat-card"><div class="lbl">Current Equity</div><div class="val" style="${pctGain!==null && pctGain<0 ? 'color:var(--red);' : ''}">${equity!==null ? "$"+Math.round(equity).toLocaleString() : "—"}</div></div>
+        <div class="stat-card"><div class="lbl">Total Gain</div><div class="val" style="${pctGain!==null && pctGain<0 ? 'color:var(--red);' : ''}">${pctGain!==null ? (pctGain>=0?"+":"")+pctGain.toFixed(2)+"%" : "—"}</div></div>
       </div>
       ${(!profile.accountSize || !profile.accountType) ? `<p style="font-size:12px; color:var(--text-soft); margin-top:8px;">Apni profile me account details set karo taaki doston ko dikh sake.</p>` : ""}
     </div>
 
+    ${profile.accountSize ? `
+    <div class="section-block">
+      <h4>📈 Log Today's P&L</h4>
+      <label>Amount ($) — negative if loss, e.g. -450 or 620</label>
+      <input type="number" id="pnlInput" value="${todayPnl !== null ? todayPnl : ''}" placeholder="e.g. 620 or -450">
+      <button class="primary" id="pnlSaveBtn" style="width:100%;">${todayPnl !== null ? "Update Today's P&L" : "Log Today's P&L"}</button>
+      <span id="pnlMsg" style="font-size:11px;color:var(--green);margin-left:8px;"></span>
+    </div>
+    ` : ""}
+
     <div class="index-head" style="font-size:13px; color:var(--text-soft); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px;">People You Follow</div>
     <div id="followingList"><p style="color:var(--text-soft); font-size:13px;">Loading…</p></div>
   `;
+  const pnlBtn = document.getElementById("pnlSaveBtn");
+  if(pnlBtn){
+    pnlBtn.addEventListener("click", async () => {
+      const val = parseFloat(document.getElementById("pnlInput").value);
+      if(isNaN(val)) return;
+      pnlBtn.disabled = true;
+      await logTodayPnl(val);
+      renderHome();
+    });
+  }
   const listEl = document.getElementById("followingList");
   if(!profile.following || profile.following.length === 0){
     listEl.innerHTML = `<p style="color:var(--text-soft); font-size:13px;">Abhi kisi ko follow nahi kiya. 🔍 Traders tab se apne doston ko dhoondo.</p>`;
@@ -434,16 +488,66 @@ async function renderHome(){
   const traders = await Promise.all(profile.following.map(uid => getTraderByUid(uid)));
   listEl.innerHTML = "";
   traders.filter(Boolean).forEach(t => {
+    const tEquity = t.runningEquity !== null && t.runningEquity !== undefined ? t.runningEquity : t.accountSize;
+    const tGain = (t.accountSize && tEquity !== null && tEquity !== undefined) ? ((tEquity - t.accountSize)/t.accountSize*100) : null;
     const row = document.createElement("div");
     row.className = "trader-row";
     row.innerHTML = `
       <div class="dp-small">${t.photoBase64 ? `<img src="${t.photoBase64}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : "👤"}</div>
-      <div>
+      <div style="flex:1;">
         <div class="tname">${t.username}</div>
-        <div class="tmeta">${t.accountType || "—"} ${t.accountSize ? "· $"+t.accountSize : ""}</div>
+        <div class="tmeta">${t.accountType || "—"} ${t.accountSize ? "· $"+t.accountSize.toLocaleString() : ""}</div>
       </div>
+      ${tGain!==null ? `<div style="font-family:var(--font-mono); font-weight:800; color:${tGain>=0?'var(--green)':'var(--red)'};">${tGain>=0?"+":""}${tGain.toFixed(1)}%</div>` : ""}
     `;
     row.addEventListener("click", () => nav("publicProfile", t.uid));
+    listEl.appendChild(row);
+  });
+}
+
+/* ================= LEADERBOARD ================= */
+async function renderLeaderboard(){
+  app.innerHTML = `<h2 style="margin-bottom:14px;">🏆 Leaderboard</h2><p style="color:var(--text-soft); font-size:13px;">Loading…</p>`;
+  let snap;
+  try{ snap = await db.collection("traders").get(); }catch(e){}
+  const traders = [];
+  if(snap) snap.forEach(doc => traders.push({ uid: doc.id, ...doc.data() }));
+
+  const ranked = traders
+    .filter(t => t.accountSize)
+    .map(t => {
+      const equity = (t.runningEquity !== null && t.runningEquity !== undefined) ? t.runningEquity : t.accountSize;
+      const pct = (equity - t.accountSize) / t.accountSize * 100;
+      return { ...t, equity, pct };
+    })
+    .sort((a,b) => b.pct - a.pct);
+
+  app.innerHTML = `
+    <h2 style="margin-bottom:6px;">🏆 Leaderboard</h2>
+    <p style="font-size:12px; color:var(--text-soft); margin-bottom:18px;">Ranked by % gain on account — sabse fair comparison chahe account size alag ho.</p>
+    <div id="lbList"></div>
+  `;
+  const listEl = document.getElementById("lbList");
+  if(ranked.length === 0){
+    listEl.innerHTML = `<p style="color:var(--text-soft); font-size:13px;">Abhi koi trader ne account size set nahi kiya.</p>`;
+    return;
+  }
+  ranked.forEach((t, i) => {
+    const rank = i+1;
+    const medal = rank===1 ? "🥇" : rank===2 ? "🥈" : rank===3 ? "🥉" : rank;
+    const row = document.createElement("div");
+    row.className = "trader-row";
+    if(t.uid === currentUser.uid) row.style.borderColor = "var(--gold)";
+    row.innerHTML = `
+      <div style="font-family:var(--font-mono); font-weight:800; width:26px; text-align:center; color:var(--text-soft);">${medal}</div>
+      <div class="dp-small">${t.photoBase64 ? `<img src="${t.photoBase64}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : "👤"}</div>
+      <div style="flex:1;">
+        <div class="tname">${t.username}${t.uid===currentUser.uid ? ' (you)' : ''}</div>
+        <div class="tmeta">${t.accountType||"—"} · $${t.accountSize.toLocaleString()} → $${Math.round(t.equity).toLocaleString()}</div>
+      </div>
+      <div style="font-family:var(--font-mono); font-weight:800; color:${t.pct>=0?'var(--green)':'var(--red)'};">${t.pct>=0?"+":""}${t.pct.toFixed(1)}%</div>
+    `;
+    row.addEventListener("click", () => nav(t.uid===currentUser.uid ? "profile" : "publicProfile", t.uid));
     listEl.appendChild(row);
   });
 }
@@ -533,11 +637,17 @@ function renderProfile(){
   document.getElementById("followersStat").addEventListener("click", () => showFollowListModal(profile.followers, "Followers"));
   document.getElementById("followingStat").addEventListener("click", () => showFollowListModal(profile.following, "Following"));
   document.getElementById("saveAccBtn").addEventListener("click", async () => {
-    await saveProfileFields({
-      accountSize: parseFloat(document.getElementById("accSize").value) || null,
+    const newSize = parseFloat(document.getElementById("accSize").value) || null;
+    const fields = {
+      accountSize: newSize,
       accountType: document.getElementById("accType").value,
       startDate: document.getElementById("accStartDate").value
-    });
+    };
+    if((profile.runningEquity === null || profile.runningEquity === undefined) && newSize){
+      fields.runningEquity = newSize;
+      fields.totalPnl = 0;
+    }
+    await saveProfileFields(fields);
     document.getElementById("accMsg").textContent = "Saved ✓";
     setTimeout(()=>{ document.getElementById("accMsg").textContent=""; }, 1500);
   });
@@ -577,6 +687,8 @@ async function renderPublicProfile(uid){
   if(!snap || !snap.exists){ app.innerHTML = `<div class="backbtn" id="backBtn">← Back</div><p>Trader nahi mila.</p>`; document.getElementById("backBtn").addEventListener("click", () => nav("home")); return; }
   const u = snap.data();
   const isFollowing = (profile.following||[]).includes(uid);
+  const uEquity = (u.runningEquity !== null && u.runningEquity !== undefined) ? u.runningEquity : u.accountSize;
+  const uPct = (u.accountSize && uEquity !== null && uEquity !== undefined) ? ((uEquity - u.accountSize)/u.accountSize*100) : null;
   app.innerHTML = `
     <div class="backbtn" id="backBtn">← Back</div>
     <div class="profile-header">
@@ -594,7 +706,9 @@ async function renderPublicProfile(uid){
     <div class="section-block">
       <h4>Trading Account</h4>
       <div class="trade-stats">
-        <div class="stat-card"><div class="lbl">Account Size</div><div class="val">${u.accountSize ? "$"+u.accountSize : "—"}</div></div>
+        <div class="stat-card"><div class="lbl">Account Size</div><div class="val">${u.accountSize ? "$"+u.accountSize.toLocaleString() : "—"}</div></div>
+        <div class="stat-card"><div class="lbl">Current Equity</div><div class="val">${uEquity!==null&&uEquity!==undefined ? "$"+Math.round(uEquity).toLocaleString() : "—"}</div></div>
+        <div class="stat-card"><div class="lbl">Total Gain</div><div class="val" style="${uPct!==null && uPct<0 ? 'color:var(--red);' : ''}">${uPct!==null ? (uPct>=0?"+":"")+uPct.toFixed(2)+"%" : "—"}</div></div>
         <div class="stat-card"><div class="lbl">Type</div><div class="val" style="font-size:13px;">${u.accountType || "—"}</div></div>
         <div class="stat-card"><div class="lbl">Start Date</div><div class="val" style="font-size:13px;">${u.startDate || "—"}</div></div>
       </div>
@@ -1136,6 +1250,7 @@ async function handleGateSubmit(){
         following:[], followers:[],
         accountSize:null, accountType:"", startDate:"",
         goalItems: withIds(DEFAULT_GOALS), ruleItems: withIds(DEFAULT_RULES), habitItems: withIds(DEFAULT_HABITS),
+        runningEquity: null, totalPnl: 0,
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
       });
       await codeRef.update({ used:true, usedBy: cred.user.uid, usedAt: firebase.firestore.FieldValue.serverTimestamp() });
