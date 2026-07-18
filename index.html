@@ -70,51 +70,9 @@
   .backbtn:hover{ color:var(--green); }
 
   /* header */
-  .home-header{ margin-bottom:18px; }
+  .home-header{ margin-bottom:22px; }
   .home-header h1{ font-size:26px; font-weight:800; letter-spacing:-0.5px; background:linear-gradient(135deg, var(--text), var(--green)); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
   .home-header .sub{ font-size:13px; color:var(--text-soft); margin-top:5px; }
-
-  /* motion — one orchestrated view transition + a quiet stagger for lists.
-     Kept to these two moments deliberately, not scattered everywhere. */
-  @keyframes viewIn{ from{ opacity:0; transform:translateY(10px); } to{ opacity:1; transform:translateY(0); } }
-  #app.view-enter{ animation:viewIn 0.32s cubic-bezier(.16,.84,.44,1); }
-  @keyframes itemIn{ from{ opacity:0; transform:translateY(8px); } to{ opacity:1; transform:translateY(0); } }
-  .stagger-in{ animation:itemIn 0.36s cubic-bezier(.16,.84,.44,1) both; }
-  @media (prefers-reduced-motion: reduce){
-    #app.view-enter, .stagger-in{ animation:none !important; }
-  }
-  button:active{ transform:scale(0.96); }
-  .trader-row:active, .trade-card:active, .tracker-hub-card:active{ transform:scale(0.985); }
-
-  /* skeleton loading — shaped like the content it becomes, not a spinner */
-  .skel{ background:linear-gradient(100deg, var(--panel-soft) 30%, rgba(255,255,255,0.07) 44%, var(--panel-soft) 58%); background-size:250% 100%; animation:skelShine 1.5s ease infinite; border:1px solid var(--border); }
-  @keyframes skelShine{ 0%{ background-position:120% 0; } 100%{ background-position:-20% 0; } }
-  .skel-hero{ height:150px; border-radius:20px; margin-bottom:16px; }
-  .skel-row{ height:70px; border-radius:14px; margin-bottom:8px; }
-  .skel-card{ height:96px; border-radius:16px; margin-bottom:14px; }
-
-  /* equity hero — the one number every trader opens the app to check */
-  .equity-hero{
-    position:relative; overflow:hidden; text-align:center; padding:26px 20px 22px; margin-bottom:16px;
-    background:var(--panel); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
-    border:1px solid var(--border); border-radius:20px;
-    box-shadow:0 10px 34px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.03);
-  }
-  .equity-hero::before{
-    content:""; position:absolute; inset:0; pointer-events:none;
-    background:radial-gradient(circle at 50% -10%, rgba(23,230,161,0.14), transparent 60%);
-  }
-  .equity-hero.down::before{ background:radial-gradient(circle at 50% -10%, rgba(255,77,106,0.12), transparent 60%); }
-  .eh-label{ position:relative; font-size:11px; text-transform:uppercase; letter-spacing:1.2px; color:var(--text-soft); font-weight:800; margin-bottom:10px; }
-  .eh-value{ position:relative; font-family:var(--font-mono); font-size:clamp(32px,9vw,46px); font-weight:800; letter-spacing:-1px; line-height:1; color:var(--text); }
-  .eh-value.up{ color:var(--green); text-shadow:0 0 30px rgba(23,230,161,0.22); }
-  .eh-value.down{ color:var(--red); text-shadow:0 0 30px rgba(255,77,106,0.2); }
-  .eh-pill{ position:relative; display:inline-flex; align-items:center; gap:5px; margin-top:12px; padding:6px 14px; border-radius:20px; font-size:13px; font-weight:800; font-family:var(--font-mono); }
-  .eh-pill.up{ background:var(--green-soft); color:var(--green); }
-  .eh-pill.down{ background:var(--red-soft); color:var(--red); }
-  .eh-sub{ position:relative; font-size:12px; color:var(--text-soft); margin-top:12px; }
-  .eh-empty .eh-value{ font-size:16px; color:var(--text-soft); font-weight:600; letter-spacing:0; }
-  .eh-empty button{ position:relative; margin-top:14px; }
 
   .section-block{
     background:var(--panel); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
@@ -425,23 +383,6 @@ function showToast(msg){
   toastTimer = setTimeout(() => el.classList.remove("show"), 3200);
 }
 
-/* Counts a number up from 0 to its target — used once, deliberately, for the
-   home equity hero. Respects prefers-reduced-motion. */
-function animateCountUp(el, target, prefix){
-  if(!el) return;
-  const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if(reduceMotion){ el.textContent = (prefix||"") + Math.round(target).toLocaleString(); return; }
-  const duration = 700;
-  const startTime = performance.now();
-  const ease = t => 1 - Math.pow(1-t, 3);
-  function tick(now){
-    const p = Math.min(1, (now-startTime)/duration);
-    el.textContent = (prefix||"") + Math.round(target*ease(p)).toLocaleString();
-    if(p < 1) requestAnimationFrame(tick);
-  }
-  requestAnimationFrame(tick);
-}
-
 /* ================= FIREBASE ================= */
 const firebaseConfig = {
   apiKey: "AIzaSyAPEgEmcs7_upeLU6vvaDmegRaQ0JqX9IE",
@@ -589,9 +530,6 @@ function computeTradeStats(trades){
 const app = document.getElementById("app");
 function nav(view, payload){
   updateBottomNavActive(view);
-  app.classList.remove("view-enter");
-  void app.offsetWidth; /* force reflow so the animation re-triggers every nav() */
-  app.classList.add("view-enter");
   if(view==="home") renderHome();
   else if(view==="search") renderSearch();
   else if(view==="profile") renderProfile();
@@ -624,29 +562,21 @@ async function renderHome(){
   const pctGain = (profile.accountSize && equity !== null) ? ((equity - profile.accountSize)/profile.accountSize*100) : null;
   const todayTrades = profile.accountSize ? await getTodayTrades() : [];
   const todayTotal = todayTrades.reduce((s,t) => s + t.pnl, 0);
-  const gainDir = pctGain===null ? "" : (pctGain>=0 ? "up" : "down");
 
   app.innerHTML = `
     <div class="home-header">
       <h1>⚡ SLF TRADER HUB</h1>
       <div class="sub">Welcome back, ${esc(profile.username)}</div>
     </div>
-
-    ${profile.accountSize && equity!==null ? `
-    <div class="equity-hero ${gainDir}">
-      <div class="eh-label">Current Equity</div>
-      <div class="eh-value ${gainDir}" id="ehValue">$0</div>
-      ${pctGain!==null ? `<div class="eh-pill ${gainDir}">${pctGain>=0?"+":""}${pctGain.toFixed(2)}% ${pctGain>=0?"↑":"↓"}</div>` : ""}
-      <div class="eh-sub">on $${profile.accountSize.toLocaleString()} ${esc(profile.accountType||"")} account</div>
+    <div class="section-block">
+      <h4>Your Account</h4>
+      <div class="trade-stats">
+        <div class="stat-card"><div class="lbl">Account Size</div><div class="val">${profile.accountSize ? "$"+profile.accountSize.toLocaleString() : "—"}</div></div>
+        <div class="stat-card"><div class="lbl">Current Equity</div><div class="val" style="${pctGain!==null && pctGain<0 ? 'color:var(--red);' : ''}">${equity!==null ? "$"+Math.round(equity).toLocaleString() : "—"}</div></div>
+        <div class="stat-card"><div class="lbl">Total Gain</div><div class="val" style="${pctGain!==null && pctGain<0 ? 'color:var(--red);' : ''}">${pctGain!==null ? (pctGain>=0?"+":"")+pctGain.toFixed(2)+"%" : "—"}</div></div>
+      </div>
+      ${(!profile.accountSize || !profile.accountType) ? `<p style="font-size:12px; color:var(--text-soft); margin-top:8px;">Apni profile me account details set karo taaki doston ko dikh sake.</p>` : ""}
     </div>
-    ` : `
-    <div class="equity-hero eh-empty">
-      <div class="eh-label">Current Equity</div>
-      <div class="eh-value">Account details abhi set nahi hain</div>
-      <div class="eh-sub">Apna account size aur type profile me daalo taaki equity yahan track ho.</div>
-      <button class="primary" id="setupAccBtn">Set Up Account</button>
-    </div>
-    `}
 
     ${profile.accountSize ? `
     <div class="section-block">
@@ -660,15 +590,8 @@ async function renderHome(){
     ` : ""}
 
     <div class="index-head" style="font-size:13px; color:var(--text-soft); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px;">People You Follow</div>
-    <div id="followingList">
-      <div class="skel skel-row"></div>
-      <div class="skel skel-row"></div>
-    </div>
+    <div id="followingList"><p style="color:var(--text-soft); font-size:13px;">Loading…</p></div>
   `;
-  const ehValue = document.getElementById("ehValue");
-  if(ehValue) animateCountUp(ehValue, Math.round(equity), "$");
-  const setupBtn = document.getElementById("setupAccBtn");
-  if(setupBtn) setupBtn.addEventListener("click", () => nav("profile"));
   const addBtn = document.getElementById("addTradeBtn");
   if(addBtn) addBtn.addEventListener("click", () => nav("addTrade"));
   const listEl = document.getElementById("followingList");
@@ -678,12 +601,11 @@ async function renderHome(){
   }
   const traders = await Promise.all(profile.following.map(uid => getTraderByUid(uid)));
   listEl.innerHTML = "";
-  traders.filter(Boolean).forEach((t, i) => {
+  traders.filter(Boolean).forEach(t => {
     const tEquity = t.runningEquity !== null && t.runningEquity !== undefined ? t.runningEquity : t.accountSize;
     const tGain = (t.accountSize && tEquity !== null && tEquity !== undefined) ? ((tEquity - t.accountSize)/t.accountSize*100) : null;
     const row = document.createElement("div");
-    row.className = "trader-row stagger-in";
-    row.style.animationDelay = (i*35) + "ms";
+    row.className = "trader-row";
     row.innerHTML = `
       <div class="dp-small">${t.photoBase64 ? `<img src="${esc(t.photoBase64)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : "👤"}</div>
       <div style="flex:1;">
@@ -699,10 +621,7 @@ async function renderHome(){
 
 /* ================= LEADERBOARD ================= */
 async function renderLeaderboard(){
-  app.innerHTML = `
-    <h2 style="margin-bottom:14px;">🏆 Leaderboard</h2>
-    <div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div>
-  `;
+  app.innerHTML = `<h2 style="margin-bottom:14px;">🏆 Leaderboard</h2><p style="color:var(--text-soft); font-size:13px;">Loading…</p>`;
   let snap;
   try{ snap = await db.collection("traders").get(); }catch(e){ console.error(e); showToast("Leaderboard load nahi hui — dobara try karo."); }
   const traders = [];
@@ -731,8 +650,7 @@ async function renderLeaderboard(){
     const rank = i+1;
     const medal = rank===1 ? "🥇" : rank===2 ? "🥈" : rank===3 ? "🥉" : rank;
     const row = document.createElement("div");
-    row.className = "trader-row stagger-in";
-    row.style.animationDelay = (i*30) + "ms";
+    row.className = "trader-row";
     if(t.uid === currentUser.uid) row.style.borderColor = "var(--gold)";
     row.innerHTML = `
       <div style="font-family:var(--font-mono); font-weight:800; width:26px; text-align:center; color:var(--text-soft);">${medal}</div>
@@ -749,19 +667,32 @@ async function renderLeaderboard(){
 }
 
 /* ================= TRADE JOURNAL ================= */
+let journalTab = "history";
+
 async function renderJournal(){
-  app.innerHTML = `
-    <h2 style="margin-bottom:14px;">📓 Trade Journal</h2>
-    <div class="skel skel-card"></div>
-    <div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div>
-  `;
+  app.innerHTML = `<h2 style="margin-bottom:14px;">📓 Trade Journal</h2><p style="color:var(--text-soft); font-size:13px;">Loading…</p>`;
   const trades = await getAllTrades(currentUser.uid);
   const stats = computeTradeStats(trades);
 
   app.innerHTML = `
     <h2 style="margin-bottom:6px;">📓 Trade Journal</h2>
-    <p style="font-size:12px; color:var(--text-soft); margin-bottom:18px;">Har trade alag se log karo — real stats yahan se nikalte hain.</p>
+    <p style="font-size:12px; color:var(--text-soft); margin-bottom:14px;">Har trade alag se log karo — real stats yahan se nikalte hain.</p>
+    <div class="rms-tabs">
+      <div class="rms-tab ${journalTab==='history'?'active':''}" id="jTabHistory">History</div>
+      <div class="rms-tab ${journalTab==='analytics'?'active':''}" id="jTabAnalytics">Analytics</div>
+    </div>
+    <div id="journalContent"></div>
+  `;
+  document.getElementById("jTabHistory").addEventListener("click", () => { journalTab="history"; renderJournal(); });
+  document.getElementById("jTabAnalytics").addEventListener("click", () => { journalTab="analytics"; renderJournal(); });
 
+  if(journalTab === "analytics") renderJournalAnalytics(trades);
+  else renderJournalHistory(trades, stats);
+}
+
+function renderJournalHistory(trades, stats){
+  const content = document.getElementById("journalContent");
+  content.innerHTML = `
     <div class="section-block">
       <h4>Stats</h4>
       <div class="trade-stats">
@@ -786,10 +717,9 @@ async function renderJournal(){
     listEl.innerHTML = `<p style="color:var(--text-soft); font-size:13px;">Abhi koi trade log nahi hui.</p>`;
     return;
   }
-  trades.forEach((t, i) => {
+  trades.forEach(t => {
     const card = document.createElement("div");
-    card.className = "trade-card stagger-in";
-    card.style.animationDelay = (i*30) + "ms";
+    card.className = "trade-card";
     card.innerHTML = `
       <div class="trade-card-top">
         <span class="direction-badge ${t.direction==='Buy'?'buy':'sell'}">${t.direction}</span>
@@ -832,6 +762,123 @@ async function renderJournal(){
     });
   });
 }
+
+/* ---------- ANALYTICS ---------- */
+function computeAnalytics(trades){
+  const startBalance = profile.accountSize || 0;
+  const sorted = [...trades].sort((a,b) => (a.createdAt||0) - (b.createdAt||0));
+
+  let running = startBalance;
+  let peak = startBalance;
+  let maxDD = 0;
+  const curve = [{ equity: running }];
+  sorted.forEach(t => {
+    running += t.pnl;
+    if(running > peak) peak = running;
+    const dd = peak - running;
+    if(dd > maxDD) maxDD = dd;
+    curve.push({ equity: running });
+  });
+
+  const byPair = {};
+  const dayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const byDay = dayNames.map(() => ({ pnl:0, wins:0, total:0 }));
+
+  sorted.forEach(t => {
+    if(!byPair[t.pair]) byPair[t.pair] = { pnl:0, wins:0, total:0 };
+    byPair[t.pair].pnl += t.pnl;
+    byPair[t.pair].total += 1;
+    if(t.pnl > 0) byPair[t.pair].wins += 1;
+
+    if(t.date){
+      const d = new Date(t.date + "T00:00:00");
+      if(!isNaN(d)){
+        const idx = d.getDay();
+        byDay[idx].pnl += t.pnl;
+        byDay[idx].total += 1;
+        if(t.pnl > 0) byDay[idx].wins += 1;
+      }
+    }
+  });
+
+  const pairRows = Object.entries(byPair)
+    .map(([pair,v]) => ({ pair, ...v, winRate: v.total ? v.wins/v.total*100 : 0 }))
+    .sort((a,b) => b.pnl - a.pnl);
+  const dayRows = dayNames.map((name,i) => ({ name, ...byDay[i], winRate: byDay[i].total ? byDay[i].wins/byDay[i].total*100 : 0 }));
+
+  const best = sorted.length ? sorted.reduce((a,b) => b.pnl > a.pnl ? b : a) : null;
+  const worst = sorted.length ? sorted.reduce((a,b) => b.pnl < a.pnl ? b : a) : null;
+
+  return { curve, maxDD, pairRows, dayRows, best, worst, startBalance, endEquity: running };
+}
+
+function buildEquityCurveSvg(curve){
+  if(curve.length < 3){
+    return `<p style="color:var(--text-soft); font-size:13px;">Kam se kam 2 trades log karo curve dekhne ke liye.</p>`;
+  }
+  const w = 600, h = 180, pad = 12;
+  const values = curve.map(c => c.equity);
+  const min = Math.min(...values), max = Math.max(...values);
+  const range = (max - min) || 1;
+  const stepX = (w - pad*2) / (curve.length - 1);
+  const pts = curve.map((c,i) => {
+    const x = pad + i*stepX;
+    const y = pad + (h - pad*2) * (1 - (c.equity - min)/range);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const up = curve[curve.length-1].equity >= curve[0].equity;
+  const lineColor = up ? "var(--green)" : "var(--red)";
+  const areaPoints = `${pad},${h-pad} ${pts.join(" ")} ${w-pad},${h-pad}`;
+  return `
+    <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="width:100%; height:170px; display:block;">
+      <polygon points="${areaPoints}" fill="${lineColor}" opacity="0.10"></polygon>
+      <polyline points="${pts.join(" ")}" fill="none" stroke="${lineColor}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></polyline>
+    </svg>
+  `;
+}
+
+function renderJournalAnalytics(trades){
+  const content = document.getElementById("journalContent");
+  if(trades.length === 0){
+    content.innerHTML = `<p style="color:var(--text-soft); font-size:13px; margin-top:10px;">Abhi koi trade log nahi hui — pehle kuch trades daalo, phir yahan analytics dikhegi.</p>`;
+    return;
+  }
+  const a = computeAnalytics(trades);
+  const ddPct = a.startBalance ? (a.maxDD/a.startBalance*100) : 0;
+
+  content.innerHTML = `
+    <div class="section-block">
+      <h4>Equity Curve</h4>
+      ${buildEquityCurveSvg(a.curve)}
+      <div class="trade-stats" style="margin-top:14px;">
+        <div class="stat-card"><div class="lbl">Max Drawdown</div><div class="val" style="color:var(--red);">$${Math.round(a.maxDD).toLocaleString()}${a.startBalance ? " ("+ddPct.toFixed(1)+"%)" : ""}</div></div>
+        <div class="stat-card"><div class="lbl">Best Trade</div><div class="val" style="color:var(--green); font-size:14px;">${a.best ? "$"+Math.round(a.best.pnl).toLocaleString()+" · "+esc(a.best.pair) : "—"}</div></div>
+        <div class="stat-card"><div class="lbl">Worst Trade</div><div class="val" style="color:var(--red); font-size:14px;">${a.worst ? "$"+Math.round(a.worst.pnl).toLocaleString()+" · "+esc(a.worst.pair) : "—"}</div></div>
+      </div>
+    </div>
+
+    <div class="section-block">
+      <h4>By Pair</h4>
+      ${a.pairRows.map(p => `
+        <div class="tracker-item" style="cursor:default;">
+          <span class="item-text">${esc(p.pair)} <span style="color:var(--text-soft); font-family:var(--font-mono); font-size:11px;">(${p.total} trades · ${p.winRate.toFixed(0)}% WR)</span></span>
+          <span style="font-family:var(--font-mono); font-weight:800; color:${p.pnl>=0?'var(--green)':'var(--red)'};">${p.pnl>=0?'+':''}$${Math.round(p.pnl).toLocaleString()}</span>
+        </div>
+      `).join("")}
+    </div>
+
+    <div class="section-block">
+      <h4>By Day of Week</h4>
+      ${a.dayRows.filter(d => d.total > 0).map(d => `
+        <div class="tracker-item" style="cursor:default;">
+          <span class="item-text">${d.name} <span style="color:var(--text-soft); font-family:var(--font-mono); font-size:11px;">(${d.total} trades · ${d.winRate.toFixed(0)}% WR)</span></span>
+          <span style="font-family:var(--font-mono); font-weight:800; color:${d.pnl>=0?'var(--green)':'var(--red)'};">${d.pnl>=0?'+':''}$${Math.round(d.pnl).toLocaleString()}</span>
+        </div>
+      `).join("") || `<p style="color:var(--text-soft); font-size:13px;">Data nahi mila.</p>`}
+    </div>
+  `;
+}
+
 
 function renderAddTrade(editTrade){
   const isEdit = !!editTrade;
@@ -1048,7 +1095,7 @@ function renderProfile(){
 
 /* ================= PUBLIC PROFILE ================= */
 async function renderPublicProfile(uid){
-  app.innerHTML = `<div class="backbtn" id="backBtn">← Back</div><div class="skel skel-card" style="height:120px;"></div><div class="skel skel-card"></div>`;
+  app.innerHTML = `<div class="backbtn" id="backBtn">← Back</div><p style="color:var(--text-soft);">Loading…</p>`;
   document.getElementById("backBtn").addEventListener("click", () => nav("home"));
   let snap;
   try{ snap = await db.collection("traders").doc(uid).get(); }catch(e){ console.error(e); showToast("Profile load nahi hui — dobara try karo."); }
@@ -1441,7 +1488,7 @@ function trackerSectionHtml(title, category, arrayKey){
 }
 
 async function renderTrackerHub(){
-  app.innerHTML = `<h2 style="margin-bottom:14px;">✅ Daily Tracker</h2><div class="skel skel-card"></div><div class="skel skel-card"></div><div class="skel skel-card"></div>`;
+  app.innerHTML = `<h2 style="margin-bottom:14px;">✅ Daily Tracker</h2><p style="color:var(--text-soft); font-size:13px;">Loading…</p>`;
   await loadTodayLog();
   const cards = [
     { view:"goals", icon:"🎯", name:"Daily Goals", cat:"goals", key:"goalItems" },
@@ -1454,13 +1501,12 @@ async function renderTrackerHub(){
     <div id="hubCards"></div>
   `;
   const hubEl = document.getElementById("hubCards");
-  cards.forEach((c, i) => {
+  cards.forEach(c => {
     const items = profile[c.key] || [];
     const done = items.filter(i => todayLog[c.cat][i.id]).length;
     const pct = items.length ? Math.round((done/items.length)*100) : 0;
     const card = document.createElement("div");
-    card.className = "tracker-hub-card stagger-in";
-    card.style.animationDelay = (i*45) + "ms";
+    card.className = "tracker-hub-card";
     card.innerHTML = `
       <div class="thc-icon">${c.icon}</div>
       <div style="flex:1;">
@@ -1475,7 +1521,7 @@ async function renderTrackerHub(){
 }
 
 async function renderTrackerPage(category, arrayKey, icon, title){
-  app.innerHTML = `<div class="backbtn" id="backBtn">← Daily Tracker</div><h2 style="margin-bottom:14px;">${icon} ${title}</h2><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div>`;
+  app.innerHTML = `<div class="backbtn" id="backBtn">← Daily Tracker</div><h2 style="margin-bottom:14px;">${icon} ${title}</h2><p style="color:var(--text-soft); font-size:13px;">Loading…</p>`;
   await loadTodayLog();
 
   const historyDates = [6,5,4,3,2,1,0].map(n => dateStrDaysAgo(n));
