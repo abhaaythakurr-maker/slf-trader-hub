@@ -144,6 +144,15 @@
   .list-modal-head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
   .list-modal-close{ cursor:pointer; color:var(--text-soft); font-size:18px; }
 
+  /* toast / error snackbar */
+  .toast{
+    position:fixed; left:50%; bottom:26px; transform:translateX(-50%) translateY(20px); z-index:6000;
+    background:var(--panel-solid); border:1px solid var(--red); color:var(--text); padding:12px 18px;
+    border-radius:12px; font-size:13px; font-weight:600; box-shadow:0 12px 30px rgba(0,0,0,0.5);
+    max-width:90vw; text-align:center; opacity:0; pointer-events:none; transition:opacity 0.25s ease, transform 0.25s ease;
+  }
+  .toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+
   /* side nav rail */
   .nav-rail{
     position:fixed; left:0; top:0; bottom:0; width:var(--rail-w); z-index:2000;
@@ -282,6 +291,7 @@
     <div id="listModalBody"></div>
   </div>
 </div>
+<div id="toast" class="toast"></div>
 
 <div class="nav-rail gated" id="bottomNav">
   <div class="rail-logo">⚡</div>
@@ -351,6 +361,28 @@ const DEFAULT_HABITS = [
 function genId(){ return Math.random().toString(36).slice(2,10); }
 function withIds(list){ return list.map(text => ({ id: genId(), text })); }
 
+/* Escapes HTML special characters before inserting untrusted (user-supplied)
+   content into innerHTML template strings — prevents stored XSS via
+   usernames, bios, trade notes, tracker items, uploaded images, etc. */
+function esc(str){
+  if(str === null || str === undefined) return "";
+  return String(str).replace(/[&<>"']/g, c => ({
+    "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"
+  }[c]));
+}
+
+/* Brief bottom-of-screen error message — used so failed saves/deletes
+   (network issues, etc.) are visible instead of failing silently. */
+let toastTimer = null;
+function showToast(msg){
+  const el = document.getElementById("toast");
+  if(!el) return;
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 3200);
+}
+
 /* ================= FIREBASE ================= */
 const firebaseConfig = {
   apiKey: "AIzaSyAPEgEmcs7_upeLU6vvaDmegRaQ0JqX9IE",
@@ -379,12 +411,19 @@ async function loadProfile(){
         runningEquity: (d.runningEquity !== undefined) ? d.runningEquity : null, totalPnl: d.totalPnl||0
       };
     }
-  }catch(e){}
+  }catch(e){ console.error(e); }
 }
 async function saveProfileFields(fields){
-  if(!currentUser) return;
-  Object.assign(profile, fields);
-  try{ await db.collection("traders").doc(currentUser.uid).update(fields); }catch(e){}
+  if(!currentUser) return false;
+  try{
+    await db.collection("traders").doc(currentUser.uid).update(fields);
+    Object.assign(profile, fields);
+    return true;
+  }catch(e){
+    console.error(e);
+    showToast("Save nahi hua — internet check karke dobara try karo.");
+    return false;
+  }
 }
 async function toggleFollow(targetUid, isFollowing){
   const batch = db.batch();
@@ -393,17 +432,24 @@ async function toggleFollow(targetUid, isFollowing){
   if(isFollowing){
     batch.update(meRef, { following: firebase.firestore.FieldValue.arrayRemove(targetUid) });
     batch.update(themRef, { followers: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) });
-    profile.following = profile.following.filter(u => u !== targetUid);
   } else {
     batch.update(meRef, { following: firebase.firestore.FieldValue.arrayUnion(targetUid) });
     batch.update(themRef, { followers: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) });
-    profile.following.push(targetUid);
   }
-  await batch.commit();
+  try{
+    await batch.commit();
+    if(isFollowing){ profile.following = profile.following.filter(u => u !== targetUid); }
+    else{ profile.following.push(targetUid); }
+    return true;
+  }catch(e){
+    console.error(e);
+    showToast("Follow update nahi hua — dobara try karo.");
+    return false;
+  }
 }
 async function getTraderByUid(uid){
   if(allTradersCache){ const f = allTradersCache.find(u => u.uid === uid); if(f) return f; }
-  try{ const snap = await db.collection("traders").doc(uid).get(); if(snap.exists) return { uid, ...snap.data() }; }catch(e){}
+  try{ const snap = await db.collection("traders").doc(uid).get(); if(snap.exists) return { uid, ...snap.data() }; }catch(e){ console.error(e); }
   return null;
 }
 
@@ -411,7 +457,7 @@ async function getTraderByUid(uid){
 async function equityDelta(delta){
   const newEquity = (profile.runningEquity ?? profile.accountSize ?? 0) + delta;
   const newTotalPnl = (profile.totalPnl || 0) + delta;
-  try{ await db.collection("traders").doc(currentUser.uid).update({ runningEquity: newEquity, totalPnl: newTotalPnl }); }catch(e){}
+  await db.collection("traders").doc(currentUser.uid).update({ runningEquity: newEquity, totalPnl: newTotalPnl });
   profile.runningEquity = newEquity;
   profile.totalPnl = newTotalPnl;
 }
@@ -433,16 +479,37 @@ async function getAllTrades(uid){
   }catch(e){ return []; }
 }
 async function addTrade(trade){
-  await db.collection("trades").add({ ...trade, uid: currentUser.uid, createdAt: Date.now() });
-  await equityDelta(trade.pnl);
+  try{
+    await db.collection("trades").add({ ...trade, uid: currentUser.uid, createdAt: Date.now() });
+    await equityDelta(trade.pnl);
+    return true;
+  }catch(e){
+    console.error(e);
+    showToast("Trade save nahi hui — internet check karke dobara try karo.");
+    return false;
+  }
 }
 async function updateTrade(tradeId, oldPnl, newTrade){
-  await db.collection("trades").doc(tradeId).update(newTrade);
-  await equityDelta(newTrade.pnl - oldPnl);
+  try{
+    await db.collection("trades").doc(tradeId).update(newTrade);
+    await equityDelta(newTrade.pnl - oldPnl);
+    return true;
+  }catch(e){
+    console.error(e);
+    showToast("Trade update nahi hui — internet check karke dobara try karo.");
+    return false;
+  }
 }
 async function deleteTrade(tradeId, pnl){
-  await db.collection("trades").doc(tradeId).delete();
-  await equityDelta(-pnl);
+  try{
+    await db.collection("trades").doc(tradeId).delete();
+    await equityDelta(-pnl);
+    return true;
+  }catch(e){
+    console.error(e);
+    showToast("Trade delete nahi hui — dobara try karo.");
+    return false;
+  }
 }
 function computeTradeStats(trades){
   const total = trades.length;
@@ -499,7 +566,7 @@ async function renderHome(){
   app.innerHTML = `
     <div class="home-header">
       <h1>⚡ SLF TRADER HUB</h1>
-      <div class="sub">Welcome back, ${profile.username}</div>
+      <div class="sub">Welcome back, ${esc(profile.username)}</div>
     </div>
     <div class="section-block">
       <h4>Your Account</h4>
@@ -540,10 +607,10 @@ async function renderHome(){
     const row = document.createElement("div");
     row.className = "trader-row";
     row.innerHTML = `
-      <div class="dp-small">${t.photoBase64 ? `<img src="${t.photoBase64}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : "👤"}</div>
+      <div class="dp-small">${t.photoBase64 ? `<img src="${esc(t.photoBase64)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : "👤"}</div>
       <div style="flex:1;">
-        <div class="tname">${t.username}</div>
-        <div class="tmeta">${t.accountType || "—"} ${t.accountSize ? "· $"+t.accountSize.toLocaleString() : ""}</div>
+        <div class="tname">${esc(t.username)}</div>
+        <div class="tmeta">${esc(t.accountType || "—")} ${t.accountSize ? "· $"+t.accountSize.toLocaleString() : ""}</div>
       </div>
       ${tGain!==null ? `<div style="font-family:var(--font-mono); font-weight:800; color:${tGain>=0?'var(--green)':'var(--red)'};">${tGain>=0?"+":""}${tGain.toFixed(1)}%</div>` : ""}
     `;
@@ -556,7 +623,7 @@ async function renderHome(){
 async function renderLeaderboard(){
   app.innerHTML = `<h2 style="margin-bottom:14px;">🏆 Leaderboard</h2><p style="color:var(--text-soft); font-size:13px;">Loading…</p>`;
   let snap;
-  try{ snap = await db.collection("traders").get(); }catch(e){}
+  try{ snap = await db.collection("traders").get(); }catch(e){ console.error(e); showToast("Leaderboard load nahi hui — dobara try karo."); }
   const traders = [];
   if(snap) snap.forEach(doc => traders.push({ uid: doc.id, ...doc.data() }));
 
@@ -587,10 +654,10 @@ async function renderLeaderboard(){
     if(t.uid === currentUser.uid) row.style.borderColor = "var(--gold)";
     row.innerHTML = `
       <div style="font-family:var(--font-mono); font-weight:800; width:26px; text-align:center; color:var(--text-soft);">${medal}</div>
-      <div class="dp-small">${t.photoBase64 ? `<img src="${t.photoBase64}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : "👤"}</div>
+      <div class="dp-small">${t.photoBase64 ? `<img src="${esc(t.photoBase64)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : "👤"}</div>
       <div style="flex:1;">
-        <div class="tname">${t.username}${t.uid===currentUser.uid ? ' (you)' : ''}</div>
-        <div class="tmeta">${t.accountType||"—"} · $${t.accountSize.toLocaleString()} → $${Math.round(t.equity).toLocaleString()}</div>
+        <div class="tname">${esc(t.username)}${t.uid===currentUser.uid ? ' (you)' : ''}</div>
+        <div class="tmeta">${esc(t.accountType||"—")} · $${t.accountSize.toLocaleString()} → $${Math.round(t.equity).toLocaleString()}</div>
       </div>
       <div style="font-family:var(--font-mono); font-weight:800; color:${t.pct>=0?'var(--green)':'var(--red)'};">${t.pct>=0?"+":""}${t.pct.toFixed(1)}%</div>
     `;
@@ -639,17 +706,17 @@ async function renderJournal(){
     card.innerHTML = `
       <div class="trade-card-top">
         <span class="direction-badge ${t.direction==='Buy'?'buy':'sell'}">${t.direction}</span>
-        <span class="trade-pair">${t.pair}</span>
+        <span class="trade-pair">${esc(t.pair)}</span>
         <span class="trade-date">${t.date}</span>
         <span class="trade-pnl" style="color:${t.pnl>=0?'var(--green)':'var(--red)'};">${t.pnl>=0?'+':''}$${Math.round(t.pnl).toLocaleString()}</span>
       </div>
       <div class="trade-detail" id="detail-${t.id}">
-        ${t.entryPrice ? `<div class="trade-detail-row"><span>Entry</span><span>${t.entryPrice}</span></div>` : ""}
-        ${t.exitPrice ? `<div class="trade-detail-row"><span>Exit</span><span>${t.exitPrice}</span></div>` : ""}
-        ${t.lotSize ? `<div class="trade-detail-row"><span>Lot Size</span><span>${t.lotSize}</span></div>` : ""}
+        ${t.entryPrice ? `<div class="trade-detail-row"><span>Entry</span><span>${esc(t.entryPrice)}</span></div>` : ""}
+        ${t.exitPrice ? `<div class="trade-detail-row"><span>Exit</span><span>${esc(t.exitPrice)}</span></div>` : ""}
+        ${t.lotSize ? `<div class="trade-detail-row"><span>Lot Size</span><span>${esc(t.lotSize)}</span></div>` : ""}
         ${(typeof t.rr === "number") ? `<div class="trade-detail-row"><span>R:R</span><span>${t.rr}R</span></div>` : ""}
-        ${t.note ? `<p style="margin-top:8px;">${t.note}</p>` : ""}
-        ${t.screenshot ? `<img src="${t.screenshot}">` : ""}
+        ${t.note ? `<p style="margin-top:8px;">${esc(t.note)}</p>` : ""}
+        ${t.screenshot ? `<img src="${esc(t.screenshot)}">` : ""}
         <div class="trade-actions">
           <button class="ghost" data-edit="${t.id}">Edit</button>
           <button class="ghost" data-del="${t.id}" style="color:var(--red);">Delete</button>
@@ -673,8 +740,8 @@ async function renderJournal(){
       e.stopPropagation();
       if(!confirm("Ye trade delete karni hai?")) return;
       const trade = trades.find(x => x.id === btn.dataset.del);
-      await deleteTrade(trade.id, trade.pnl);
-      renderJournal();
+      const ok = await deleteTrade(trade.id, trade.pnl);
+      if(ok) renderJournal();
     });
   });
 }
@@ -686,29 +753,29 @@ function renderAddTrade(editTrade){
     <h2 style="margin-bottom:16px;">${isEdit ? "✏️ Edit Trade" : "+ Log a Trade"}</h2>
     <div class="section-block">
       <label>Pair / Symbol</label>
-      <input type="text" id="tPair" value="${isEdit ? editTrade.pair : ''}" placeholder="e.g. XAUUSD, EURUSD">
+      <input type="text" id="tPair" value="${esc(isEdit ? editTrade.pair : '')}" placeholder="e.g. XAUUSD, EURUSD">
       <label>Direction</label>
       <select id="tDirection">
         <option value="Buy" ${isEdit && editTrade.direction==='Buy' ? 'selected':''}>Buy</option>
         <option value="Sell" ${isEdit && editTrade.direction==='Sell' ? 'selected':''}>Sell</option>
       </select>
       <label>Date</label>
-      <input type="date" id="tDate" value="${isEdit ? editTrade.date : todayDateStr()}">
+      <input type="date" id="tDate" value="${esc(isEdit ? editTrade.date : todayDateStr())}">
       <label>Entry Price (optional)</label>
-      <input type="text" id="tEntry" value="${isEdit && editTrade.entryPrice ? editTrade.entryPrice : ''}" placeholder="e.g. 2015.50">
+      <input type="text" id="tEntry" value="${esc(isEdit && editTrade.entryPrice ? editTrade.entryPrice : '')}" placeholder="e.g. 2015.50">
       <label>Exit Price (optional)</label>
-      <input type="text" id="tExit" value="${isEdit && editTrade.exitPrice ? editTrade.exitPrice : ''}" placeholder="e.g. 2020.30">
+      <input type="text" id="tExit" value="${esc(isEdit && editTrade.exitPrice ? editTrade.exitPrice : '')}" placeholder="e.g. 2020.30">
       <label>Lot Size (optional)</label>
-      <input type="text" id="tLot" value="${isEdit && editTrade.lotSize ? editTrade.lotSize : ''}" placeholder="e.g. 0.5">
+      <input type="text" id="tLot" value="${esc(isEdit && editTrade.lotSize ? editTrade.lotSize : '')}" placeholder="e.g. 0.5">
       <label>P&L ($) — required, negative if loss</label>
       <input type="number" id="tPnl" value="${isEdit ? editTrade.pnl : ''}" placeholder="e.g. 480 or -220">
       <label>R:R (optional)</label>
       <input type="number" step="0.1" id="tRR" value="${isEdit && typeof editTrade.rr==='number' ? editTrade.rr : ''}" placeholder="e.g. 2.5">
       <label>Note (optional)</label>
-      <textarea class="bio-box" id="tNote" placeholder="Setup, reasoning, mistakes...">${isEdit && editTrade.note ? editTrade.note : ''}</textarea>
+      <textarea class="bio-box" id="tNote" placeholder="Setup, reasoning, mistakes...">${esc(isEdit && editTrade.note ? editTrade.note : '')}</textarea>
       <label>Screenshot (optional)</label>
       <input type="file" id="tScreenshot" accept="image/*">
-      <div id="tScreenshotPreview" style="margin-top:8px;">${isEdit && editTrade.screenshot ? `<img src="${editTrade.screenshot}" style="max-width:100%; border-radius:8px;">` : ""}</div>
+      <div id="tScreenshotPreview" style="margin-top:8px;">${isEdit && editTrade.screenshot ? `<img src="${esc(editTrade.screenshot)}" style="max-width:100%; border-radius:8px;">` : ""}</div>
       <button class="primary" id="saveTradeBtn" style="width:100%; margin-top:14px;">${isEdit ? "Save Changes" : "Log Trade"}</button>
       <div class="gate-error" id="tradeError"></div>
     </div>
@@ -752,13 +819,13 @@ function renderAddTrade(editTrade){
       note: document.getElementById("tNote").value.trim(),
       screenshot: screenshotBase64
     };
-    document.getElementById("saveTradeBtn").disabled = true;
-    if(isEdit){
-      await updateTrade(editTrade.id, editTrade.pnl, tradeData);
-    } else {
-      await addTrade(tradeData);
-    }
-    nav("journal");
+    const saveBtn = document.getElementById("saveTradeBtn");
+    saveBtn.disabled = true;
+    const ok = isEdit
+      ? await updateTrade(editTrade.id, editTrade.pnl, tradeData)
+      : await addTrade(tradeData);
+    if(ok){ nav("journal"); }
+    else{ saveBtn.disabled = false; }
   });
 }
 
@@ -792,8 +859,8 @@ async function renderSearch(){
         const row = document.createElement("div");
         row.className = "trader-row";
         row.innerHTML = `
-          <div class="dp-small">${u.photoBase64 ? `<img src="${u.photoBase64}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : "👤"}</div>
-          <div><div class="tname">${u.username}</div><div class="tmeta">${u.accountType||"—"}</div></div>
+          <div class="dp-small">${u.photoBase64 ? `<img src="${esc(u.photoBase64)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : "👤"}</div>
+          <div><div class="tname">${esc(u.username)}</div><div class="tmeta">${esc(u.accountType||"—")}</div></div>
         `;
         row.addEventListener("click", () => nav("publicProfile", u.uid));
         results.appendChild(row);
@@ -806,10 +873,10 @@ async function renderSearch(){
 function renderProfile(){
   app.innerHTML = `
     <div class="profile-header">
-      <div class="dp" id="dpBox">${profile.photoBase64 ? `<img src="${profile.photoBase64}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : "👤"}</div>
+      <div class="dp" id="dpBox">${profile.photoBase64 ? `<img src="${esc(profile.photoBase64)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : "👤"}</div>
       <div>
-        <div class="profile-name">${profile.username}</div>
-        <div class="profile-username">@${profile.username}</div>
+        <div class="profile-name">${esc(profile.username)}</div>
+        <div class="profile-username">@${esc(profile.username)}</div>
         <label class="dp-upload" for="dpUpload">Change photo</label>
         <input type="file" id="dpUpload" accept="image/*" style="display:none;">
       </div>
@@ -829,26 +896,16 @@ function renderProfile(){
         ${ACCOUNT_TYPES.map(t => `<option value="${t}" ${profile.accountType===t?'selected':''}>${t}</option>`).join("")}
       </select>
       <label>Challenge Start Date</label>
-      <input type="date" id="accStartDate" value="${profile.startDate||''}">
+      <input type="date" id="accStartDate" value="${esc(profile.startDate||'')}">
       <button class="primary" id="saveAccBtn">Save Account Info</button>
       <span id="accMsg" style="font-size:11px;color:var(--green);margin-left:8px;"></span>
     </div>
 
     <div class="section-block">
       <h4>Bio</h4>
-      <textarea class="bio-box" id="bioInput" placeholder="Kuch likho apne baare me...">${profile.bio||""}</textarea>
+      <textarea class="bio-box" id="bioInput" placeholder="Kuch likho apne baare me...">${esc(profile.bio||"")}</textarea>
       <button class="primary" id="saveBioBtn">Save Bio</button>
       <span id="bioMsg" style="font-size:11px;color:var(--green);margin-left:8px;"></span>
-    </div>
-
-    <div class="section-block">
-      <h4>🔒 Change Password</h4>
-      <label>New Password</label>
-      <input type="password" id="newPassInput" placeholder="Naya password (6+ characters)">
-      <label>Confirm New Password</label>
-      <input type="password" id="confirmPassInput" placeholder="Naya password dobara likho">
-      <button class="primary" id="changePassBtn" style="width:100%;">Update Password</button>
-      <div class="gate-error" id="passChangeMsg"></div>
     </div>
 
     <button class="ghost" id="logoutBtn" style="width:100%;">Logout</button>
@@ -856,27 +913,6 @@ function renderProfile(){
   attachLongPress(document.getElementById("dpBox"), () => showImageModal(profile.photoBase64));
   document.getElementById("followersStat").addEventListener("click", () => showFollowListModal(profile.followers, "Followers"));
   document.getElementById("followingStat").addEventListener("click", () => showFollowListModal(profile.following, "Following"));
-  document.getElementById("changePassBtn").addEventListener("click", async () => {
-    const p1 = document.getElementById("newPassInput").value;
-    const p2 = document.getElementById("confirmPassInput").value;
-    const msg = document.getElementById("passChangeMsg");
-    if(p1.length < 6){ msg.style.color = "var(--red)"; msg.textContent = "Password kam se kam 6 characters ka hona chahiye."; return; }
-    if(p1 !== p2){ msg.style.color = "var(--red)"; msg.textContent = "Dono password match nahi ho rahe."; return; }
-    try{
-      await auth.currentUser.updatePassword(p1);
-      msg.style.color = "var(--green)";
-      msg.textContent = "✅ Password update ho gaya! Ab isi naye password se login hoga.";
-      document.getElementById("newPassInput").value = "";
-      document.getElementById("confirmPassInput").value = "";
-    }catch(e){
-      msg.style.color = "var(--red)";
-      if(e.code === "auth/requires-recent-login"){
-        msg.textContent = "Security ke liye dobara login karna padega pehle, phir turant try karo.";
-      } else {
-        msg.textContent = "❌ " + e.message;
-      }
-    }
-  });
   document.getElementById("saveAccBtn").addEventListener("click", async () => {
     const newSize = parseFloat(document.getElementById("accSize").value) || null;
     const fields = {
@@ -888,14 +924,18 @@ function renderProfile(){
       fields.runningEquity = newSize;
       fields.totalPnl = 0;
     }
-    await saveProfileFields(fields);
-    document.getElementById("accMsg").textContent = "Saved ✓";
-    setTimeout(()=>{ document.getElementById("accMsg").textContent=""; }, 1500);
+    const ok = await saveProfileFields(fields);
+    if(ok){
+      document.getElementById("accMsg").textContent = "Saved ✓";
+      setTimeout(()=>{ document.getElementById("accMsg").textContent=""; }, 1500);
+    }
   });
   document.getElementById("saveBioBtn").addEventListener("click", async () => {
-    await saveProfileFields({ bio: document.getElementById("bioInput").value.trim() });
-    document.getElementById("bioMsg").textContent = "Saved ✓";
-    setTimeout(()=>{ document.getElementById("bioMsg").textContent=""; }, 1500);
+    const ok = await saveProfileFields({ bio: document.getElementById("bioInput").value.trim() });
+    if(ok){
+      document.getElementById("bioMsg").textContent = "Saved ✓";
+      setTimeout(()=>{ document.getElementById("bioMsg").textContent=""; }, 1500);
+    }
   });
   document.getElementById("dpUpload").addEventListener("change", (e) => {
     const file = e.target.files[0]; if(!file) return;
@@ -924,7 +964,7 @@ async function renderPublicProfile(uid){
   app.innerHTML = `<div class="backbtn" id="backBtn">← Back</div><p style="color:var(--text-soft);">Loading…</p>`;
   document.getElementById("backBtn").addEventListener("click", () => nav("home"));
   let snap;
-  try{ snap = await db.collection("traders").doc(uid).get(); }catch(e){}
+  try{ snap = await db.collection("traders").doc(uid).get(); }catch(e){ console.error(e); showToast("Profile load nahi hui — dobara try karo."); }
   if(!snap || !snap.exists){ app.innerHTML = `<div class="backbtn" id="backBtn">← Back</div><p>Trader nahi mila.</p>`; document.getElementById("backBtn").addEventListener("click", () => nav("home")); return; }
   const u = snap.data();
   const isFollowing = (profile.following||[]).includes(uid);
@@ -933,10 +973,10 @@ async function renderPublicProfile(uid){
   app.innerHTML = `
     <div class="backbtn" id="backBtn">← Back</div>
     <div class="profile-header">
-      <div class="dp" id="dpBoxPublic">${u.photoBase64 ? `<img src="${u.photoBase64}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : "👤"}</div>
+      <div class="dp" id="dpBoxPublic">${u.photoBase64 ? `<img src="${esc(u.photoBase64)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : "👤"}</div>
       <div>
-        <div class="profile-name">${u.username}</div>
-        <div class="profile-username">@${u.username}</div>
+        <div class="profile-name">${esc(u.username)}</div>
+        <div class="profile-username">@${esc(u.username)}</div>
         <button class="primary follow-btn" id="followBtn">${isFollowing ? "Following ✓" : "+ Follow"}</button>
       </div>
     </div>
@@ -950,11 +990,11 @@ async function renderPublicProfile(uid){
         <div class="stat-card"><div class="lbl">Account Size</div><div class="val">${u.accountSize ? "$"+u.accountSize.toLocaleString() : "—"}</div></div>
         <div class="stat-card"><div class="lbl">Current Equity</div><div class="val">${uEquity!==null&&uEquity!==undefined ? "$"+Math.round(uEquity).toLocaleString() : "—"}</div></div>
         <div class="stat-card"><div class="lbl">Total Gain</div><div class="val" style="${uPct!==null && uPct<0 ? 'color:var(--red);' : ''}">${uPct!==null ? (uPct>=0?"+":"")+uPct.toFixed(2)+"%" : "—"}</div></div>
-        <div class="stat-card"><div class="lbl">Type</div><div class="val" style="font-size:13px;">${u.accountType || "—"}</div></div>
-        <div class="stat-card"><div class="lbl">Start Date</div><div class="val" style="font-size:13px;">${u.startDate || "—"}</div></div>
+        <div class="stat-card"><div class="lbl">Type</div><div class="val" style="font-size:13px;">${esc(u.accountType || "—")}</div></div>
+        <div class="stat-card"><div class="lbl">Start Date</div><div class="val" style="font-size:13px;">${esc(u.startDate || "—")}</div></div>
       </div>
     </div>
-    ${u.bio ? `<div class="section-block"><h4>Bio</h4><p style="font-size:13.5px;">${u.bio}</p></div>` : ""}
+    ${u.bio ? `<div class="section-block"><h4>Bio</h4><p style="font-size:13.5px;">${esc(u.bio)}</p></div>` : ""}
   `;
   document.getElementById("backBtn").addEventListener("click", () => nav("home"));
   attachLongPress(document.getElementById("dpBoxPublic"), () => showImageModal(u.photoBase64));
@@ -963,8 +1003,9 @@ async function renderPublicProfile(uid){
   document.getElementById("followBtn").addEventListener("click", async (e) => {
     e.target.disabled = true;
     const currentlyFollowing = (profile.following||[]).includes(uid);
-    await toggleFollow(uid, currentlyFollowing);
-    renderPublicProfile(uid);
+    const ok = await toggleFollow(uid, currentlyFollowing);
+    if(ok){ renderPublicProfile(uid); }
+    else{ e.target.disabled = false; }
   });
 }
 
@@ -1191,7 +1232,7 @@ function renderAIMessages(){
   if(!el) return;
   el.innerHTML = "";
   if(aiChatHistory.length === 0){
-    el.innerHTML = `<div class="ai-bubble theirs">👋 Hey ${profile.username}! Mujhse apne SLF 1-Step Challenge account ke rules, daily loss limit, drawdown, ya risk se juda kuch bhi pucho.</div>`;
+    el.innerHTML = `<div class="ai-bubble theirs">👋 Hey ${esc(profile.username)}! Mujhse apne SLF 1-Step Challenge account ke rules, daily loss limit, drawdown, ya risk se juda kuch bhi pucho.</div>`;
     return;
   }
   aiChatHistory.forEach(m => {
@@ -1259,19 +1300,33 @@ async function toggleLogItem(category, itemId, checked){
       uid: currentUser.uid, date: todayDateStr(),
       [category]: todayLog[category]
     }, { merge: true });
-  }catch(e){}
+  }catch(e){
+    console.error(e);
+    todayLog[category][itemId] = !checked;
+    showToast("Save nahi hua — dobara try karo.");
+  }
 }
 async function addTrackerItemSilent(category, arrayKey){
   const inputId = `newItem-${category}`;
   const input = document.getElementById(inputId);
   const text = input.value.trim();
   if(!text) return;
-  profile[arrayKey].push({ id: genId(), text });
-  try{ await db.collection("traders").doc(currentUser.uid).update({ [arrayKey]: profile[arrayKey] }); }catch(e){}
+  const item = { id: genId(), text };
+  profile[arrayKey].push(item);
+  try{ await db.collection("traders").doc(currentUser.uid).update({ [arrayKey]: profile[arrayKey] }); }catch(e){
+    console.error(e);
+    profile[arrayKey] = profile[arrayKey].filter(i => i.id !== item.id);
+    showToast("Item save nahi hua — dobara try karo.");
+  }
 }
 async function deleteTrackerItemSilent(arrayKey, itemId){
+  const removed = profile[arrayKey].find(i => i.id === itemId);
   profile[arrayKey] = profile[arrayKey].filter(i => i.id !== itemId);
-  try{ await db.collection("traders").doc(currentUser.uid).update({ [arrayKey]: profile[arrayKey] }); }catch(e){}
+  try{ await db.collection("traders").doc(currentUser.uid).update({ [arrayKey]: profile[arrayKey] }); }catch(e){
+    console.error(e);
+    if(removed) profile[arrayKey].push(removed);
+    showToast("Delete save nahi hua — dobara try karo.");
+  }
 }
 
 function trackerSectionHtml(title, category, arrayKey){
@@ -1285,7 +1340,7 @@ function trackerSectionHtml(title, category, arrayKey){
       ${items.map(i => `
         <div class="tracker-item ${todayLog[category][i.id] ? 'done' : ''}">
           <input type="checkbox" data-cat="${category}" data-id="${i.id}" ${todayLog[category][i.id] ? "checked" : ""}>
-          <span class="item-text">${i.text}</span>
+          <span class="item-text">${esc(i.text)}</span>
           <span class="del-x" data-delkey="${arrayKey}" data-delid="${i.id}">✕</span>
         </div>
       `).join("")}
@@ -1393,8 +1448,13 @@ async function loadSuggestedItems(category, arrayKey, icon, title){
   const existingTexts = (profile[arrayKey]||[]).map(i => i.text.toLowerCase());
   const toAdd = DEFAULTS_MAP[category].filter(t => !existingTexts.includes(t.toLowerCase()));
   if(toAdd.length === 0){ renderTrackerPage(category, arrayKey, icon, title); return; }
+  const before = profile[arrayKey];
   profile[arrayKey] = profile[arrayKey].concat(withIds(toAdd));
-  try{ await db.collection("traders").doc(currentUser.uid).update({ [arrayKey]: profile[arrayKey] }); }catch(e){}
+  try{ await db.collection("traders").doc(currentUser.uid).update({ [arrayKey]: profile[arrayKey] }); }catch(e){
+    console.error(e);
+    profile[arrayKey] = before;
+    showToast("Save nahi hua — dobara try karo.");
+  }
   renderTrackerPage(category, arrayKey, icon, title);
 }
 async function addTrackerItemOnPage(cat, arrayKey, category, ak, icon, title){
@@ -1436,8 +1496,8 @@ async function showFollowListModal(uids, title){
     const row = document.createElement("div");
     row.className = "trader-row";
     row.innerHTML = `
-      <div class="dp-small">${u.photoBase64 ? `<img src="${u.photoBase64}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : "👤"}</div>
-      <div><div class="tname">${u.username}</div></div>
+      <div class="dp-small">${u.photoBase64 ? `<img src="${esc(u.photoBase64)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : "👤"}</div>
+      <div><div class="tname">${esc(u.username)}</div></div>
     `;
     row.addEventListener("click", () => { document.getElementById("listModal").classList.add("hidden"); nav("publicProfile", u.uid); });
     body.appendChild(row);
