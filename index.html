@@ -1169,25 +1169,29 @@ function renderRMS(){
     <h2 style="margin-bottom:14px;">📊 RMS — 1 Step Challenge</h2>
     <div class="rms-tabs">
       <div class="rms-tab ${rmsTab==='calc'?'active':''}" id="rmsTabCalc">Calculator</div>
+      <div class="rms-tab ${rmsTab==='possize'?'active':''}" id="rmsTabPosSize">Lot Size</div>
       <div class="rms-tab ${rmsTab==='rules'?'active':''}" id="rmsTabRules">Rules</div>
     </div>
     <div id="rmsContent"></div>
   `;
   document.getElementById("rmsTabCalc").addEventListener("click", () => { rmsTab="calc"; renderRMS(); });
+  document.getElementById("rmsTabPosSize").addEventListener("click", () => { rmsTab="possize"; renderRMS(); });
   document.getElementById("rmsTabRules").addEventListener("click", () => { rmsTab="rules"; renderRMS(); });
   if(rmsTab === "calc") renderRMSCalculator();
+  else if(rmsTab === "possize") renderRMSPositionSize();
   else renderRMSRulesTab();
 }
 
-function renderRMSCalculator(){
+async function renderRMSCalculator(){
   const content = document.getElementById("rmsContent");
   const defaultBalance = profile.accountSize || 100000;
   content.innerHTML = `
     <div class="section-block">
       <label>Account Balance ($)</label>
       <input type="number" id="rmsBalance" value="${defaultBalance}">
-      <label>Today's P&amp;L so far ($) — negative if in loss, e.g. -1200</label>
+      <label>Today's P&amp;L so far ($)</label>
       <input type="number" id="rmsTodayPL" value="0">
+      <div id="rmsTodayNote" style="font-size:11px; color:var(--text-soft); margin:-6px 0 12px;">Aapke journal se aaj ke trades check ho rahe hain…</div>
       <label>Risk per trade (%)</label>
       <input type="number" id="rmsRiskPct" value="1" step="0.25">
       <button class="primary" id="rmsCalcBtn" style="width:100%;">Calculate</button>
@@ -1197,6 +1201,21 @@ function renderRMSCalculator(){
   `;
   document.getElementById("rmsCalcBtn").addEventListener("click", computeRMS);
   computeRMS();
+
+  /* auto-fill today's P&L from trades actually logged in the journal */
+  const todayTrades = await getTodayTrades();
+  const todayTotal = todayTrades.reduce((s,t) => s + t.pnl, 0);
+  const plInput = document.getElementById("rmsTodayPL");
+  const noteEl = document.getElementById("rmsTodayNote");
+  if(plInput){
+    plInput.value = Math.round(todayTotal * 100) / 100;
+    if(noteEl){
+      noteEl.textContent = todayTrades.length
+        ? `Auto-filled — aaj journal me ${todayTrades.length} trade${todayTrades.length>1?'s':''} logged hain. Chaho to yahan edit bhi kar sakte ho.`
+        : `Aaj koi trade journal me log nahi hui — yahan manually daal sakte ho simulate karne ke liye.`;
+    }
+    computeRMS();
+  }
 }
 
 function computeRMS(){
@@ -1227,6 +1246,70 @@ function computeRMS(){
   `;
 }
 
+/* ---------- POSITION SIZE (LOT SIZE) CALCULATOR ---------- */
+const PIP_VALUE_PRESETS = {
+  "EURUSD": 10, "GBPUSD": 10, "AUDUSD": 10, "NZDUSD": 10,
+  "USDJPY": 9.2, "GBPJPY": 9.2, "EURJPY": 9.2,
+  "USDCAD": 7.3, "USDCHF": 11.5,
+  "XAUUSD (Gold)": 1,
+  "US30 / DJ30": 1, "NAS100 / US100": 1, "SPX500 / US500": 1,
+  "BTCUSD": 1,
+  "Custom / Other": 10
+};
+
+function renderRMSPositionSize(){
+  const content = document.getElementById("rmsContent");
+  const defaultBalance = profile.accountSize || 100000;
+  content.innerHTML = `
+    <div class="section-block">
+      <label>Instrument</label>
+      <select id="psInstrument">
+        ${Object.keys(PIP_VALUE_PRESETS).map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join("")}
+      </select>
+      <label>Account Balance ($)</label>
+      <input type="number" id="psBalance" value="${defaultBalance}">
+      <label>Risk per trade (%)</label>
+      <input type="number" id="psRiskPct" value="1" step="0.25">
+      <label>Stop Loss (in pips / points)</label>
+      <input type="number" id="psSL" value="20" step="1">
+      <label>$ Value per pip/point (per 1.00 standard lot)</label>
+      <input type="number" id="psPipValue" value="10" step="0.1">
+      <button class="primary" id="psCalcBtn" style="width:100%;">Calculate Lot Size</button>
+    </div>
+    <div id="psResults"></div>
+    <div class="rms-disclaimer">⚠️ Pip/point values yahan approximate averages hain (USD account ke liye) — live exchange rate aur broker ke contract specs ke hisaab se thoda alag ho sakte hain. Real trade lene se pehle apne SLF dashboard/broker se exact value confirm kar lo.</div>
+  `;
+  const instrSel = document.getElementById("psInstrument");
+  const pipInput = document.getElementById("psPipValue");
+  instrSel.addEventListener("change", () => {
+    pipInput.value = PIP_VALUE_PRESETS[instrSel.value];
+    computePositionSize();
+  });
+  ["psBalance","psRiskPct","psSL","psPipValue"].forEach(id => {
+    document.getElementById(id).addEventListener("input", computePositionSize);
+  });
+  document.getElementById("psCalcBtn").addEventListener("click", computePositionSize);
+  computePositionSize();
+}
+
+function computePositionSize(){
+  const balance = parseFloat(document.getElementById("psBalance").value) || 0;
+  const riskPct = parseFloat(document.getElementById("psRiskPct").value) || 0;
+  const slPips = parseFloat(document.getElementById("psSL").value) || 0;
+  const pipValue = parseFloat(document.getElementById("psPipValue").value) || 0;
+
+  const riskAmount = balance * (riskPct/100);
+  const lotSize = (slPips > 0 && pipValue > 0) ? (riskAmount / (slPips * pipValue)) : 0;
+
+  const resultsEl = document.getElementById("psResults");
+  resultsEl.innerHTML = `
+    <div class="rms-output">
+      <div class="out-card"><div class="lbl">Risk Amount</div><div class="val">$${riskAmount.toLocaleString(undefined,{maximumFractionDigits:2})}</div><div class="sub">${riskPct}% of balance</div></div>
+      <div class="out-card"><div class="lbl">Suggested Lot Size</div><div class="val">${lotSize > 0 ? lotSize.toFixed(2) : "—"}</div><div class="sub">standard lots, at ${slPips || 0} pips SL</div></div>
+    </div>
+  `;
+}
+
 function renderRMSRulesTab(){
   const content = document.getElementById("rmsContent");
   content.innerHTML = `
@@ -1234,6 +1317,7 @@ function renderRMSRulesTab(){
     <div class="rms-disclaimer">Source: SLF's publicly documented 1-Step Challenge rules. SLF's own rule pages have occasionally shown minor inconsistencies (per independent reviews) — treat this as a quick reference, not the final word. Always check your live SLF dashboard.</div>
   `;
 }
+
 
 /* ================= AI ASSISTANT (rule-based, free, no API) ================= */
 function fmtMoney(n){ return "$" + Math.round(n).toLocaleString(); }
