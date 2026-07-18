@@ -70,9 +70,51 @@
   .backbtn:hover{ color:var(--green); }
 
   /* header */
-  .home-header{ margin-bottom:22px; }
+  .home-header{ margin-bottom:18px; }
   .home-header h1{ font-size:26px; font-weight:800; letter-spacing:-0.5px; background:linear-gradient(135deg, var(--text), var(--green)); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
   .home-header .sub{ font-size:13px; color:var(--text-soft); margin-top:5px; }
+
+  /* motion — one orchestrated view transition + a quiet stagger for lists.
+     Kept to these two moments deliberately, not scattered everywhere. */
+  @keyframes viewIn{ from{ opacity:0; transform:translateY(10px); } to{ opacity:1; transform:translateY(0); } }
+  #app.view-enter{ animation:viewIn 0.32s cubic-bezier(.16,.84,.44,1); }
+  @keyframes itemIn{ from{ opacity:0; transform:translateY(8px); } to{ opacity:1; transform:translateY(0); } }
+  .stagger-in{ animation:itemIn 0.36s cubic-bezier(.16,.84,.44,1) both; }
+  @media (prefers-reduced-motion: reduce){
+    #app.view-enter, .stagger-in{ animation:none !important; }
+  }
+  button:active{ transform:scale(0.96); }
+  .trader-row:active, .trade-card:active, .tracker-hub-card:active{ transform:scale(0.985); }
+
+  /* skeleton loading — shaped like the content it becomes, not a spinner */
+  .skel{ background:linear-gradient(100deg, var(--panel-soft) 30%, rgba(255,255,255,0.07) 44%, var(--panel-soft) 58%); background-size:250% 100%; animation:skelShine 1.5s ease infinite; border:1px solid var(--border); }
+  @keyframes skelShine{ 0%{ background-position:120% 0; } 100%{ background-position:-20% 0; } }
+  .skel-hero{ height:150px; border-radius:20px; margin-bottom:16px; }
+  .skel-row{ height:70px; border-radius:14px; margin-bottom:8px; }
+  .skel-card{ height:96px; border-radius:16px; margin-bottom:14px; }
+
+  /* equity hero — the one number every trader opens the app to check */
+  .equity-hero{
+    position:relative; overflow:hidden; text-align:center; padding:26px 20px 22px; margin-bottom:16px;
+    background:var(--panel); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
+    border:1px solid var(--border); border-radius:20px;
+    box-shadow:0 10px 34px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.03);
+  }
+  .equity-hero::before{
+    content:""; position:absolute; inset:0; pointer-events:none;
+    background:radial-gradient(circle at 50% -10%, rgba(23,230,161,0.14), transparent 60%);
+  }
+  .equity-hero.down::before{ background:radial-gradient(circle at 50% -10%, rgba(255,77,106,0.12), transparent 60%); }
+  .eh-label{ position:relative; font-size:11px; text-transform:uppercase; letter-spacing:1.2px; color:var(--text-soft); font-weight:800; margin-bottom:10px; }
+  .eh-value{ position:relative; font-family:var(--font-mono); font-size:clamp(32px,9vw,46px); font-weight:800; letter-spacing:-1px; line-height:1; color:var(--text); }
+  .eh-value.up{ color:var(--green); text-shadow:0 0 30px rgba(23,230,161,0.22); }
+  .eh-value.down{ color:var(--red); text-shadow:0 0 30px rgba(255,77,106,0.2); }
+  .eh-pill{ position:relative; display:inline-flex; align-items:center; gap:5px; margin-top:12px; padding:6px 14px; border-radius:20px; font-size:13px; font-weight:800; font-family:var(--font-mono); }
+  .eh-pill.up{ background:var(--green-soft); color:var(--green); }
+  .eh-pill.down{ background:var(--red-soft); color:var(--red); }
+  .eh-sub{ position:relative; font-size:12px; color:var(--text-soft); margin-top:12px; }
+  .eh-empty .eh-value{ font-size:16px; color:var(--text-soft); font-weight:600; letter-spacing:0; }
+  .eh-empty button{ position:relative; margin-top:14px; }
 
   .section-block{
     background:var(--panel); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
@@ -383,6 +425,23 @@ function showToast(msg){
   toastTimer = setTimeout(() => el.classList.remove("show"), 3200);
 }
 
+/* Counts a number up from 0 to its target — used once, deliberately, for the
+   home equity hero. Respects prefers-reduced-motion. */
+function animateCountUp(el, target, prefix){
+  if(!el) return;
+  const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if(reduceMotion){ el.textContent = (prefix||"") + Math.round(target).toLocaleString(); return; }
+  const duration = 700;
+  const startTime = performance.now();
+  const ease = t => 1 - Math.pow(1-t, 3);
+  function tick(now){
+    const p = Math.min(1, (now-startTime)/duration);
+    el.textContent = (prefix||"") + Math.round(target*ease(p)).toLocaleString();
+    if(p < 1) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
 /* ================= FIREBASE ================= */
 const firebaseConfig = {
   apiKey: "AIzaSyAPEgEmcs7_upeLU6vvaDmegRaQ0JqX9IE",
@@ -530,6 +589,9 @@ function computeTradeStats(trades){
 const app = document.getElementById("app");
 function nav(view, payload){
   updateBottomNavActive(view);
+  app.classList.remove("view-enter");
+  void app.offsetWidth; /* force reflow so the animation re-triggers every nav() */
+  app.classList.add("view-enter");
   if(view==="home") renderHome();
   else if(view==="search") renderSearch();
   else if(view==="profile") renderProfile();
@@ -562,21 +624,29 @@ async function renderHome(){
   const pctGain = (profile.accountSize && equity !== null) ? ((equity - profile.accountSize)/profile.accountSize*100) : null;
   const todayTrades = profile.accountSize ? await getTodayTrades() : [];
   const todayTotal = todayTrades.reduce((s,t) => s + t.pnl, 0);
+  const gainDir = pctGain===null ? "" : (pctGain>=0 ? "up" : "down");
 
   app.innerHTML = `
     <div class="home-header">
       <h1>⚡ SLF TRADER HUB</h1>
       <div class="sub">Welcome back, ${esc(profile.username)}</div>
     </div>
-    <div class="section-block">
-      <h4>Your Account</h4>
-      <div class="trade-stats">
-        <div class="stat-card"><div class="lbl">Account Size</div><div class="val">${profile.accountSize ? "$"+profile.accountSize.toLocaleString() : "—"}</div></div>
-        <div class="stat-card"><div class="lbl">Current Equity</div><div class="val" style="${pctGain!==null && pctGain<0 ? 'color:var(--red);' : ''}">${equity!==null ? "$"+Math.round(equity).toLocaleString() : "—"}</div></div>
-        <div class="stat-card"><div class="lbl">Total Gain</div><div class="val" style="${pctGain!==null && pctGain<0 ? 'color:var(--red);' : ''}">${pctGain!==null ? (pctGain>=0?"+":"")+pctGain.toFixed(2)+"%" : "—"}</div></div>
-      </div>
-      ${(!profile.accountSize || !profile.accountType) ? `<p style="font-size:12px; color:var(--text-soft); margin-top:8px;">Apni profile me account details set karo taaki doston ko dikh sake.</p>` : ""}
+
+    ${profile.accountSize && equity!==null ? `
+    <div class="equity-hero ${gainDir}">
+      <div class="eh-label">Current Equity</div>
+      <div class="eh-value ${gainDir}" id="ehValue">$0</div>
+      ${pctGain!==null ? `<div class="eh-pill ${gainDir}">${pctGain>=0?"+":""}${pctGain.toFixed(2)}% ${pctGain>=0?"↑":"↓"}</div>` : ""}
+      <div class="eh-sub">on $${profile.accountSize.toLocaleString()} ${esc(profile.accountType||"")} account</div>
     </div>
+    ` : `
+    <div class="equity-hero eh-empty">
+      <div class="eh-label">Current Equity</div>
+      <div class="eh-value">Account details abhi set nahi hain</div>
+      <div class="eh-sub">Apna account size aur type profile me daalo taaki equity yahan track ho.</div>
+      <button class="primary" id="setupAccBtn">Set Up Account</button>
+    </div>
+    `}
 
     ${profile.accountSize ? `
     <div class="section-block">
@@ -590,8 +660,15 @@ async function renderHome(){
     ` : ""}
 
     <div class="index-head" style="font-size:13px; color:var(--text-soft); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px;">People You Follow</div>
-    <div id="followingList"><p style="color:var(--text-soft); font-size:13px;">Loading…</p></div>
+    <div id="followingList">
+      <div class="skel skel-row"></div>
+      <div class="skel skel-row"></div>
+    </div>
   `;
+  const ehValue = document.getElementById("ehValue");
+  if(ehValue) animateCountUp(ehValue, Math.round(equity), "$");
+  const setupBtn = document.getElementById("setupAccBtn");
+  if(setupBtn) setupBtn.addEventListener("click", () => nav("profile"));
   const addBtn = document.getElementById("addTradeBtn");
   if(addBtn) addBtn.addEventListener("click", () => nav("addTrade"));
   const listEl = document.getElementById("followingList");
@@ -601,11 +678,12 @@ async function renderHome(){
   }
   const traders = await Promise.all(profile.following.map(uid => getTraderByUid(uid)));
   listEl.innerHTML = "";
-  traders.filter(Boolean).forEach(t => {
+  traders.filter(Boolean).forEach((t, i) => {
     const tEquity = t.runningEquity !== null && t.runningEquity !== undefined ? t.runningEquity : t.accountSize;
     const tGain = (t.accountSize && tEquity !== null && tEquity !== undefined) ? ((tEquity - t.accountSize)/t.accountSize*100) : null;
     const row = document.createElement("div");
-    row.className = "trader-row";
+    row.className = "trader-row stagger-in";
+    row.style.animationDelay = (i*35) + "ms";
     row.innerHTML = `
       <div class="dp-small">${t.photoBase64 ? `<img src="${esc(t.photoBase64)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : "👤"}</div>
       <div style="flex:1;">
@@ -621,7 +699,10 @@ async function renderHome(){
 
 /* ================= LEADERBOARD ================= */
 async function renderLeaderboard(){
-  app.innerHTML = `<h2 style="margin-bottom:14px;">🏆 Leaderboard</h2><p style="color:var(--text-soft); font-size:13px;">Loading…</p>`;
+  app.innerHTML = `
+    <h2 style="margin-bottom:14px;">🏆 Leaderboard</h2>
+    <div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div>
+  `;
   let snap;
   try{ snap = await db.collection("traders").get(); }catch(e){ console.error(e); showToast("Leaderboard load nahi hui — dobara try karo."); }
   const traders = [];
@@ -650,7 +731,8 @@ async function renderLeaderboard(){
     const rank = i+1;
     const medal = rank===1 ? "🥇" : rank===2 ? "🥈" : rank===3 ? "🥉" : rank;
     const row = document.createElement("div");
-    row.className = "trader-row";
+    row.className = "trader-row stagger-in";
+    row.style.animationDelay = (i*30) + "ms";
     if(t.uid === currentUser.uid) row.style.borderColor = "var(--gold)";
     row.innerHTML = `
       <div style="font-family:var(--font-mono); font-weight:800; width:26px; text-align:center; color:var(--text-soft);">${medal}</div>
@@ -668,7 +750,11 @@ async function renderLeaderboard(){
 
 /* ================= TRADE JOURNAL ================= */
 async function renderJournal(){
-  app.innerHTML = `<h2 style="margin-bottom:14px;">📓 Trade Journal</h2><p style="color:var(--text-soft); font-size:13px;">Loading…</p>`;
+  app.innerHTML = `
+    <h2 style="margin-bottom:14px;">📓 Trade Journal</h2>
+    <div class="skel skel-card"></div>
+    <div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div>
+  `;
   const trades = await getAllTrades(currentUser.uid);
   const stats = computeTradeStats(trades);
 
@@ -700,9 +786,10 @@ async function renderJournal(){
     listEl.innerHTML = `<p style="color:var(--text-soft); font-size:13px;">Abhi koi trade log nahi hui.</p>`;
     return;
   }
-  trades.forEach(t => {
+  trades.forEach((t, i) => {
     const card = document.createElement("div");
-    card.className = "trade-card";
+    card.className = "trade-card stagger-in";
+    card.style.animationDelay = (i*30) + "ms";
     card.innerHTML = `
       <div class="trade-card-top">
         <span class="direction-badge ${t.direction==='Buy'?'buy':'sell'}">${t.direction}</span>
@@ -961,7 +1048,7 @@ function renderProfile(){
 
 /* ================= PUBLIC PROFILE ================= */
 async function renderPublicProfile(uid){
-  app.innerHTML = `<div class="backbtn" id="backBtn">← Back</div><p style="color:var(--text-soft);">Loading…</p>`;
+  app.innerHTML = `<div class="backbtn" id="backBtn">← Back</div><div class="skel skel-card" style="height:120px;"></div><div class="skel skel-card"></div>`;
   document.getElementById("backBtn").addEventListener("click", () => nav("home"));
   let snap;
   try{ snap = await db.collection("traders").doc(uid).get(); }catch(e){ console.error(e); showToast("Profile load nahi hui — dobara try karo."); }
@@ -1354,7 +1441,7 @@ function trackerSectionHtml(title, category, arrayKey){
 }
 
 async function renderTrackerHub(){
-  app.innerHTML = `<h2 style="margin-bottom:14px;">✅ Daily Tracker</h2><p style="color:var(--text-soft); font-size:13px;">Loading…</p>`;
+  app.innerHTML = `<h2 style="margin-bottom:14px;">✅ Daily Tracker</h2><div class="skel skel-card"></div><div class="skel skel-card"></div><div class="skel skel-card"></div>`;
   await loadTodayLog();
   const cards = [
     { view:"goals", icon:"🎯", name:"Daily Goals", cat:"goals", key:"goalItems" },
@@ -1367,12 +1454,13 @@ async function renderTrackerHub(){
     <div id="hubCards"></div>
   `;
   const hubEl = document.getElementById("hubCards");
-  cards.forEach(c => {
+  cards.forEach((c, i) => {
     const items = profile[c.key] || [];
     const done = items.filter(i => todayLog[c.cat][i.id]).length;
     const pct = items.length ? Math.round((done/items.length)*100) : 0;
     const card = document.createElement("div");
-    card.className = "tracker-hub-card";
+    card.className = "tracker-hub-card stagger-in";
+    card.style.animationDelay = (i*45) + "ms";
     card.innerHTML = `
       <div class="thc-icon">${c.icon}</div>
       <div style="flex:1;">
@@ -1387,7 +1475,7 @@ async function renderTrackerHub(){
 }
 
 async function renderTrackerPage(category, arrayKey, icon, title){
-  app.innerHTML = `<div class="backbtn" id="backBtn">← Daily Tracker</div><h2 style="margin-bottom:14px;">${icon} ${title}</h2><p style="color:var(--text-soft); font-size:13px;">Loading…</p>`;
+  app.innerHTML = `<div class="backbtn" id="backBtn">← Daily Tracker</div><h2 style="margin-bottom:14px;">${icon} ${title}</h2><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div>`;
   await loadTodayLog();
 
   const historyDates = [6,5,4,3,2,1,0].map(n => dateStrDaysAgo(n));
