@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LAGEND TRADERS </title>
+<title>SLF Trader Hub</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%230A0E14'/%3E%3Ctext x='50' y='65' font-size='50' text-anchor='middle' fill='%2316C784'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SLF Hub">
@@ -227,6 +227,22 @@
   .ai-chip{ font-size:12px; background:var(--panel); border:1px solid var(--border-strong); color:var(--text-soft); padding:8px 14px; border-radius:18px; cursor:pointer; font-weight:500; }
   .ai-chip:hover{ border-color:var(--green); color:var(--green); }
 
+  .trade-card{ background:var(--panel); backdrop-filter:blur(14px); border:1px solid var(--border); border-radius:14px; padding:14px 16px; margin-bottom:9px; cursor:pointer; transition:all 0.15s ease; }
+  .trade-card:hover{ border-color:var(--border-strong); }
+  .trade-card-top{ display:flex; align-items:center; gap:10px; }
+  .direction-badge{ font-size:10px; font-weight:800; padding:4px 9px; border-radius:6px; text-transform:uppercase; letter-spacing:0.4px; }
+  .direction-badge.buy{ background:rgba(23,230,161,0.15); color:var(--green); }
+  .direction-badge.sell{ background:rgba(255,77,106,0.15); color:var(--red); }
+  .trade-pair{ font-weight:800; font-size:14px; }
+  .trade-date{ font-size:11px; color:var(--text-soft); font-family:var(--font-mono); }
+  .trade-pnl{ margin-left:auto; font-family:var(--font-mono); font-weight:800; font-size:15px; }
+  .trade-detail{ display:none; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); font-size:12.5px; color:var(--text-soft); }
+  .trade-detail.open{ display:block; }
+  .trade-detail-row{ display:flex; justify-content:space-between; margin-bottom:4px; }
+  .trade-detail img{ max-width:100%; border-radius:8px; margin-top:8px; }
+  .trade-actions{ display:flex; gap:8px; margin-top:10px; }
+  .trade-actions button{ flex:1; padding:8px; font-size:12px; }
+
   @media (max-width: 600px){
     :root{ --rail-w:60px; }
     .rail-item{ width:44px; height:44px; }
@@ -284,6 +300,10 @@
   <div class="rail-item" data-nav="leaderboard">
     <svg viewBox="0 0 24 24"><path d="M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M7 6H4.5A1.5 1.5 0 0 0 3 7.5 3.5 3.5 0 0 0 6.5 11"/><path d="M17 6h2.5A1.5 1.5 0 0 1 21 7.5 3.5 3.5 0 0 1 17.5 11"/><path d="M12 14v4"/><path d="M9 20h6"/></svg>
     <span class="rail-lbl">Rank</span>
+  </div>
+  <div class="rail-item" data-nav="journal">
+    <svg viewBox="0 0 24 24"><path d="M6 3h11a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V3z"/><path d="M6 3C4.9 3 4 3.9 4 5v14c0 1.1.9 2 2 2"/><path d="M9 8h6"/><path d="M9 12h6"/><path d="M9 16h3"/></svg>
+    <span class="rail-lbl">Journal</span>
   </div>
   <div class="rail-item" data-nav="trackerHub">
     <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8.5 12.5l2 2 5-5"/></svg>
@@ -387,28 +407,55 @@ async function getTraderByUid(uid){
   return null;
 }
 
-/* ---------- DAILY P&L ---------- */
-function todayKey(){ return `${currentUser.uid}_${todayDateStr()}`; }
-async function getTodayPnl(){
-  try{
-    const snap = await db.collection("dailyLogs").doc(todayKey()).get();
-    if(snap.exists && typeof snap.data().pnl === "number") return snap.data().pnl;
-  }catch(e){}
-  return null;
+/* ---------- TRADE JOURNAL ---------- */
+async function equityDelta(delta){
+  const newEquity = (profile.runningEquity ?? profile.accountSize ?? 0) + delta;
+  const newTotalPnl = (profile.totalPnl || 0) + delta;
+  try{ await db.collection("traders").doc(currentUser.uid).update({ runningEquity: newEquity, totalPnl: newTotalPnl }); }catch(e){}
+  profile.runningEquity = newEquity;
+  profile.totalPnl = newTotalPnl;
 }
-async function logTodayPnl(newAmount){
-  const oldAmount = (await getTodayPnl()) || 0;
-  const delta = newAmount - oldAmount;
+async function getTodayTrades(){
   try{
-    await db.collection("dailyLogs").doc(todayKey()).set({
-      uid: currentUser.uid, date: todayDateStr(), pnl: newAmount
-    }, { merge: true });
-    const newEquity = (profile.runningEquity ?? profile.accountSize ?? 0) + delta;
-    const newTotalPnl = (profile.totalPnl || 0) + delta;
-    await db.collection("traders").doc(currentUser.uid).update({ runningEquity: newEquity, totalPnl: newTotalPnl });
-    profile.runningEquity = newEquity;
-    profile.totalPnl = newTotalPnl;
-  }catch(e){}
+    const snap = await db.collection("trades").where("uid","==",currentUser.uid).where("date","==",todayDateStr()).get();
+    const list = [];
+    snap.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
+    return list;
+  }catch(e){ return []; }
+}
+async function getAllTrades(uid){
+  try{
+    const snap = await db.collection("trades").where("uid","==",uid).orderBy("createdAt","desc").limit(200).get();
+    const list = [];
+    snap.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
+    return list;
+  }catch(e){ return []; }
+}
+async function addTrade(trade){
+  await db.collection("trades").add({ ...trade, uid: currentUser.uid, createdAt: Date.now() });
+  await equityDelta(trade.pnl);
+}
+async function updateTrade(tradeId, oldPnl, newTrade){
+  await db.collection("trades").doc(tradeId).update(newTrade);
+  await equityDelta(newTrade.pnl - oldPnl);
+}
+async function deleteTrade(tradeId, pnl){
+  await db.collection("trades").doc(tradeId).delete();
+  await equityDelta(-pnl);
+}
+function computeTradeStats(trades){
+  const total = trades.length;
+  const wins = trades.filter(t => t.pnl > 0);
+  const losses = trades.filter(t => t.pnl < 0);
+  const winRate = total ? (wins.length/total*100) : 0;
+  const sumWins = wins.reduce((s,t)=>s+t.pnl,0);
+  const sumLosses = Math.abs(losses.reduce((s,t)=>s+t.pnl,0));
+  const profitFactor = sumLosses > 0 ? (sumWins/sumLosses) : (sumWins > 0 ? Infinity : 0);
+  const avgWin = wins.length ? sumWins/wins.length : 0;
+  const avgLoss = losses.length ? sumLosses/losses.length : 0;
+  const rrVals = trades.filter(t => typeof t.rr === "number").map(t => t.rr);
+  const avgR = rrVals.length ? rrVals.reduce((s,v)=>s+v,0)/rrVals.length : null;
+  return { total, winRate, profitFactor, avgWin, avgLoss, avgR, sumWins, sumLosses };
 }
 
 /* ================= ROUTER ================= */
@@ -421,6 +468,8 @@ function nav(view, payload){
   else if(view==="publicProfile") renderPublicProfile(payload);
   else if(view==="rms") renderRMS();
   else if(view==="leaderboard") renderLeaderboard();
+  else if(view==="journal") renderJournal();
+  else if(view==="addTrade") renderAddTrade(payload);
   else if(view==="trackerHub") renderTrackerHub();
   else if(view==="goals") renderTrackerPage("goals","goalItems","🎯","Daily Goals");
   else if(view==="rules") renderTrackerPage("rules","ruleItems","📜","Rules Followed");
@@ -429,8 +478,11 @@ function nav(view, payload){
 }
 function updateBottomNavActive(view){
   const trackerViews = ["trackerHub","goals","rules","habits"];
+  const journalViews = ["journal","addTrade"];
   document.querySelectorAll(".rail-item").forEach(el => {
-    const isActive = el.dataset.nav === view || (el.dataset.nav === "trackerHub" && trackerViews.includes(view));
+    const isActive = el.dataset.nav === view
+      || (el.dataset.nav === "trackerHub" && trackerViews.includes(view))
+      || (el.dataset.nav === "journal" && journalViews.includes(view));
     el.classList.toggle("active", isActive);
   });
 }
@@ -438,9 +490,10 @@ document.querySelectorAll(".rail-item").forEach(el => el.addEventListener("click
 
 /* ================= HOME ================= */
 async function renderHome(){
-  const todayPnl = profile.accountSize ? await getTodayPnl() : null;
   const equity = profile.runningEquity !== null ? profile.runningEquity : profile.accountSize;
   const pctGain = (profile.accountSize && equity !== null) ? ((equity - profile.accountSize)/profile.accountSize*100) : null;
+  const todayTrades = profile.accountSize ? await getTodayTrades() : [];
+  const todayTotal = todayTrades.reduce((s,t) => s + t.pnl, 0);
 
   app.innerHTML = `
     <div class="home-header">
@@ -459,27 +512,20 @@ async function renderHome(){
 
     ${profile.accountSize ? `
     <div class="section-block">
-      <h4>📈 Log Today's P&L</h4>
-      <label>Amount ($) — negative if loss, e.g. -450 or 620</label>
-      <input type="number" id="pnlInput" value="${todayPnl !== null ? todayPnl : ''}" placeholder="e.g. 620 or -450">
-      <button class="primary" id="pnlSaveBtn" style="width:100%;">${todayPnl !== null ? "Update Today's P&L" : "Log Today's P&L"}</button>
-      <span id="pnlMsg" style="font-size:11px;color:var(--green);margin-left:8px;"></span>
+      <h4>📓 Today's Trades</h4>
+      <div class="trade-stats" style="margin-bottom:14px;">
+        <div class="stat-card"><div class="lbl">Trades Today</div><div class="val" style="color:var(--text);">${todayTrades.length}</div></div>
+        <div class="stat-card"><div class="lbl">Today's P&L</div><div class="val" style="color:${todayTotal>=0?'var(--green)':'var(--red)'};">${todayTotal>=0?'+':''}$${Math.round(todayTotal).toLocaleString()}</div></div>
+      </div>
+      <button class="primary" id="addTradeBtn" style="width:100%;">+ Log a Trade</button>
     </div>
     ` : ""}
 
     <div class="index-head" style="font-size:13px; color:var(--text-soft); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px;">People You Follow</div>
     <div id="followingList"><p style="color:var(--text-soft); font-size:13px;">Loading…</p></div>
   `;
-  const pnlBtn = document.getElementById("pnlSaveBtn");
-  if(pnlBtn){
-    pnlBtn.addEventListener("click", async () => {
-      const val = parseFloat(document.getElementById("pnlInput").value);
-      if(isNaN(val)) return;
-      pnlBtn.disabled = true;
-      await logTodayPnl(val);
-      renderHome();
-    });
-  }
+  const addBtn = document.getElementById("addTradeBtn");
+  if(addBtn) addBtn.addEventListener("click", () => nav("addTrade"));
   const listEl = document.getElementById("followingList");
   if(!profile.following || profile.following.length === 0){
     listEl.innerHTML = `<p style="color:var(--text-soft); font-size:13px;">Abhi kisi ko follow nahi kiya. 🔍 Traders tab se apne doston ko dhoondo.</p>`;
@@ -549,6 +595,169 @@ async function renderLeaderboard(){
     `;
     row.addEventListener("click", () => nav(t.uid===currentUser.uid ? "profile" : "publicProfile", t.uid));
     listEl.appendChild(row);
+  });
+}
+
+/* ================= TRADE JOURNAL ================= */
+async function renderJournal(){
+  app.innerHTML = `<h2 style="margin-bottom:14px;">📓 Trade Journal</h2><p style="color:var(--text-soft); font-size:13px;">Loading…</p>`;
+  const trades = await getAllTrades(currentUser.uid);
+  const stats = computeTradeStats(trades);
+
+  app.innerHTML = `
+    <h2 style="margin-bottom:6px;">📓 Trade Journal</h2>
+    <p style="font-size:12px; color:var(--text-soft); margin-bottom:18px;">Har trade alag se log karo — real stats yahan se nikalte hain.</p>
+
+    <div class="section-block">
+      <h4>Stats</h4>
+      <div class="trade-stats">
+        <div class="stat-card"><div class="lbl">Total Trades</div><div class="val" style="color:var(--text);">${stats.total}</div></div>
+        <div class="stat-card"><div class="lbl">Win Rate</div><div class="val">${stats.winRate.toFixed(1)}%</div></div>
+        <div class="stat-card"><div class="lbl">Profit Factor</div><div class="val">${stats.profitFactor===Infinity ? "∞" : stats.profitFactor.toFixed(2)}</div></div>
+        <div class="stat-card"><div class="lbl">Avg Win</div><div class="val" style="color:var(--green);">$${Math.round(stats.avgWin).toLocaleString()}</div></div>
+        <div class="stat-card"><div class="lbl">Avg Loss</div><div class="val" style="color:var(--red);">$${Math.round(stats.avgLoss).toLocaleString()}</div></div>
+        <div class="stat-card"><div class="lbl">Avg R:R</div><div class="val">${stats.avgR!==null ? stats.avgR.toFixed(2)+"R" : "—"}</div></div>
+      </div>
+    </div>
+
+    <button class="primary" id="addTradeBtn2" style="width:100%; margin-bottom:18px;">+ Log a Trade</button>
+
+    <div class="index-head" style="font-size:13px; color:var(--text-soft); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px;">History</div>
+    <div id="tradesList"></div>
+  `;
+  document.getElementById("addTradeBtn2").addEventListener("click", () => nav("addTrade"));
+
+  const listEl = document.getElementById("tradesList");
+  if(trades.length === 0){
+    listEl.innerHTML = `<p style="color:var(--text-soft); font-size:13px;">Abhi koi trade log nahi hui.</p>`;
+    return;
+  }
+  trades.forEach(t => {
+    const card = document.createElement("div");
+    card.className = "trade-card";
+    card.innerHTML = `
+      <div class="trade-card-top">
+        <span class="direction-badge ${t.direction==='Buy'?'buy':'sell'}">${t.direction}</span>
+        <span class="trade-pair">${t.pair}</span>
+        <span class="trade-date">${t.date}</span>
+        <span class="trade-pnl" style="color:${t.pnl>=0?'var(--green)':'var(--red)'};">${t.pnl>=0?'+':''}$${Math.round(t.pnl).toLocaleString()}</span>
+      </div>
+      <div class="trade-detail" id="detail-${t.id}">
+        ${t.entryPrice ? `<div class="trade-detail-row"><span>Entry</span><span>${t.entryPrice}</span></div>` : ""}
+        ${t.exitPrice ? `<div class="trade-detail-row"><span>Exit</span><span>${t.exitPrice}</span></div>` : ""}
+        ${t.lotSize ? `<div class="trade-detail-row"><span>Lot Size</span><span>${t.lotSize}</span></div>` : ""}
+        ${(typeof t.rr === "number") ? `<div class="trade-detail-row"><span>R:R</span><span>${t.rr}R</span></div>` : ""}
+        ${t.note ? `<p style="margin-top:8px;">${t.note}</p>` : ""}
+        ${t.screenshot ? `<img src="${t.screenshot}">` : ""}
+        <div class="trade-actions">
+          <button class="ghost" data-edit="${t.id}">Edit</button>
+          <button class="ghost" data-del="${t.id}" style="color:var(--red);">Delete</button>
+        </div>
+      </div>
+    `;
+    card.querySelector(".trade-card-top").addEventListener("click", () => {
+      document.getElementById(`detail-${t.id}`).classList.toggle("open");
+    });
+    listEl.appendChild(card);
+  });
+  listEl.querySelectorAll("[data-edit]").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const trade = trades.find(x => x.id === btn.dataset.edit);
+      nav("addTrade", trade);
+    });
+  });
+  listEl.querySelectorAll("[data-del]").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if(!confirm("Ye trade delete karni hai?")) return;
+      const trade = trades.find(x => x.id === btn.dataset.del);
+      await deleteTrade(trade.id, trade.pnl);
+      renderJournal();
+    });
+  });
+}
+
+function renderAddTrade(editTrade){
+  const isEdit = !!editTrade;
+  app.innerHTML = `
+    <div class="backbtn" id="backBtn">← Journal</div>
+    <h2 style="margin-bottom:16px;">${isEdit ? "✏️ Edit Trade" : "+ Log a Trade"}</h2>
+    <div class="section-block">
+      <label>Pair / Symbol</label>
+      <input type="text" id="tPair" value="${isEdit ? editTrade.pair : ''}" placeholder="e.g. XAUUSD, EURUSD">
+      <label>Direction</label>
+      <select id="tDirection">
+        <option value="Buy" ${isEdit && editTrade.direction==='Buy' ? 'selected':''}>Buy</option>
+        <option value="Sell" ${isEdit && editTrade.direction==='Sell' ? 'selected':''}>Sell</option>
+      </select>
+      <label>Date</label>
+      <input type="date" id="tDate" value="${isEdit ? editTrade.date : todayDateStr()}">
+      <label>Entry Price (optional)</label>
+      <input type="text" id="tEntry" value="${isEdit && editTrade.entryPrice ? editTrade.entryPrice : ''}" placeholder="e.g. 2015.50">
+      <label>Exit Price (optional)</label>
+      <input type="text" id="tExit" value="${isEdit && editTrade.exitPrice ? editTrade.exitPrice : ''}" placeholder="e.g. 2020.30">
+      <label>Lot Size (optional)</label>
+      <input type="text" id="tLot" value="${isEdit && editTrade.lotSize ? editTrade.lotSize : ''}" placeholder="e.g. 0.5">
+      <label>P&L ($) — required, negative if loss</label>
+      <input type="number" id="tPnl" value="${isEdit ? editTrade.pnl : ''}" placeholder="e.g. 480 or -220">
+      <label>R:R (optional)</label>
+      <input type="number" step="0.1" id="tRR" value="${isEdit && typeof editTrade.rr==='number' ? editTrade.rr : ''}" placeholder="e.g. 2.5">
+      <label>Note (optional)</label>
+      <textarea class="bio-box" id="tNote" placeholder="Setup, reasoning, mistakes...">${isEdit && editTrade.note ? editTrade.note : ''}</textarea>
+      <label>Screenshot (optional)</label>
+      <input type="file" id="tScreenshot" accept="image/*">
+      <div id="tScreenshotPreview" style="margin-top:8px;">${isEdit && editTrade.screenshot ? `<img src="${editTrade.screenshot}" style="max-width:100%; border-radius:8px;">` : ""}</div>
+      <button class="primary" id="saveTradeBtn" style="width:100%; margin-top:14px;">${isEdit ? "Save Changes" : "Log Trade"}</button>
+      <div class="gate-error" id="tradeError"></div>
+    </div>
+  `;
+  document.getElementById("backBtn").addEventListener("click", () => nav("journal"));
+
+  let screenshotBase64 = isEdit ? (editTrade.screenshot || null) : null;
+  document.getElementById("tScreenshot").addEventListener("change", (e) => {
+    const file = e.target.files[0]; if(!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const maxDim = 700;
+        const scale = Math.min(1, maxDim/Math.max(img.width, img.height));
+        canvas.width = img.width*scale; canvas.height = img.height*scale;
+        canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+        screenshotBase64 = canvas.toDataURL("image/jpeg", 0.7);
+        document.getElementById("tScreenshotPreview").innerHTML = `<img src="${screenshotBase64}" style="max-width:100%; border-radius:8px;">`;
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+
+  document.getElementById("saveTradeBtn").addEventListener("click", async () => {
+    const pnl = parseFloat(document.getElementById("tPnl").value);
+    const pair = document.getElementById("tPair").value.trim();
+    const errEl = document.getElementById("tradeError");
+    if(!pair){ errEl.textContent = "Pair/symbol daalo."; return; }
+    if(isNaN(pnl)){ errEl.textContent = "P&L amount daalo."; return; }
+    const rrVal = document.getElementById("tRR").value;
+    const tradeData = {
+      pair, direction: document.getElementById("tDirection").value,
+      date: document.getElementById("tDate").value || todayDateStr(),
+      entryPrice: document.getElementById("tEntry").value.trim(),
+      exitPrice: document.getElementById("tExit").value.trim(),
+      lotSize: document.getElementById("tLot").value.trim(),
+      pnl, rr: rrVal !== "" ? parseFloat(rrVal) : null,
+      note: document.getElementById("tNote").value.trim(),
+      screenshot: screenshotBase64
+    };
+    document.getElementById("saveTradeBtn").disabled = true;
+    if(isEdit){
+      await updateTrade(editTrade.id, editTrade.pnl, tradeData);
+    } else {
+      await addTrade(tradeData);
+    }
+    nav("journal");
   });
 }
 
