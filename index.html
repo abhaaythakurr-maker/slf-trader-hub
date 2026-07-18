@@ -425,9 +425,10 @@ async function getTodayTrades(){
 }
 async function getAllTrades(uid){
   try{
-    const snap = await db.collection("trades").where("uid","==",uid).orderBy("createdAt","desc").limit(200).get();
+    const snap = await db.collection("trades").where("uid","==",uid).limit(200).get();
     const list = [];
     snap.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
+    list.sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
     return list;
   }catch(e){ return []; }
 }
