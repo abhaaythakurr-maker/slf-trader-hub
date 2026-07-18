@@ -1319,7 +1319,7 @@ function renderRMSRulesTab(){
 }
 
 
-/* ================= AI ASSISTANT (rule-based, free, no API) ================= */
+/* ================= AI ASSISTANT (rule-based + real journal data, free, no external API) ================= */
 function fmtMoney(n){ return "$" + Math.round(n).toLocaleString(); }
 
 function extractNumber(text){
@@ -1329,34 +1329,78 @@ function extractNumber(text){
 
 const BOT_TOPICS = [
   {
+    key: "performance",
+    keywords: ["performance","kaisa chal raha","kaisi chal rahi","how am i doing","meri trading","review kar","win rate","profit factor","analytics batao","meri stats"],
+    reply: async () => {
+      const trades = await getAllTrades(currentUser.uid);
+      if(trades.length === 0){
+        return `Abhi tumne koi trade journal me log nahi ki — kuch trades daal do, phir main tumhe real win rate, profit factor aur weekday pattern nikal ke bata sakta hoon.`;
+      }
+      const stats = computeTradeStats(trades);
+      const a = computeAnalytics(trades);
+      let out = `📈 Tumhari journal ke real data ke hisaab se:\n\n`;
+      out += `• Total Trades: ${stats.total}\n`;
+      out += `• Win Rate: ${stats.winRate.toFixed(1)}%\n`;
+      out += `• Profit Factor: ${stats.profitFactor===Infinity ? "∞" : stats.profitFactor.toFixed(2)}`;
+      if(a.best) out += `\n• Best Trade: ${fmtMoney(a.best.pnl)} (${a.best.pair})`;
+      if(a.worst) out += `\n• Worst Trade: ${fmtMoney(a.worst.pnl)} (${a.worst.pair})`;
+
+      const activeDays = a.dayRows.filter(d => d.total > 0);
+      if(activeDays.length > 1){
+        const bestDay = [...activeDays].sort((x,y) => y.pnl - x.pnl)[0];
+        const worstDay = [...activeDays].sort((x,y) => x.pnl - y.pnl)[0];
+        out += `\n\n📅 ${bestDay.name} tumhara best din raha hai (${bestDay.pnl>=0?'+':''}${fmtMoney(bestDay.pnl)}).`;
+        if(worstDay.name !== bestDay.name) out += ` ${worstDay.name} ko sabse zyada struggle hua hai (${worstDay.pnl>=0?'+':''}${fmtMoney(worstDay.pnl)}) — is din thoda extra careful raho.`;
+      }
+      if(stats.total >= 5 && stats.profitFactor < 1){
+        out += `\n\n⚠️ Profit factor 1 se kam hai — matlab total losses, total wins se zyada bhaari hain. Risk-per-trade thoda chhota karne pe socho, ya apne losing setups journal me review karo.`;
+      }
+      return out;
+    }
+  },
+  {
     key: "dailyloss",
     keywords: ["daily loss","daily limit","loss today","lost today","aur trade","more trade","can i trade","trade karu"],
-    reply: (text) => {
+    reply: async (text) => {
       const balance = profile.accountSize || 100000;
       const maxDailyLoss = balance * 0.04;
-      const lossAmt = extractNumber(text);
+      let lossAmt = extractNumber(text);
+      let autoNote = "";
+      if(lossAmt === null){
+        const todayTrades = await getTodayTrades();
+        const todayTotal = todayTrades.reduce((s,t) => s + t.pnl, 0);
+        lossAmt = todayTotal < 0 ? Math.abs(todayTotal) : 0;
+        autoNote = todayTrades.length
+          ? ` (tumhare journal ke ${todayTrades.length} trade${todayTrades.length>1?'s':''} se auto-nikala hai)`
+          : ` (aaj koi trade journal me nahi mili, isliye 0 maan raha hoon)`;
+      }
       let out = `📉 Max Daily Loss on your $${balance.toLocaleString()} account is ${fmtMoney(maxDailyLoss)} (4%).`;
-      if(lossAmt !== null){
-        const remaining = maxDailyLoss - lossAmt;
-        if(remaining <= 0){
-          out += `\n\n🚨 Tumne ${fmtMoney(lossAmt)} loss bataya — ye daily limit se zyada/barabar hai. Aaj ke liye trading ROK DO, warna breach ho sakta hai.`;
-        } else {
-          out += `\n\nTumne ${fmtMoney(lossAmt)} loss bataya, to aaj ke liye ${fmtMoney(remaining)} ka buffer bacha hai. Chhote size me hi trade karo, buffer khatam hone se pehle ruk jao.`;
-        }
+      const remaining = maxDailyLoss - lossAmt;
+      if(remaining <= 0){
+        out += `\n\n🚨 Aaj ka loss ${fmtMoney(lossAmt)}${autoNote} — ye daily limit se zyada/barabar hai. Trading ROK DO, warna breach ho sakta hai.`;
       } else {
-        out += `\n\nApna aaj ka loss amount bata do (jaise "aaj $1500 loss hua") to main exact buffer nikal ke bata dunga.`;
+        out += `\n\nAaj ka loss ${fmtMoney(lossAmt)}${autoNote}, to abhi ${fmtMoney(remaining)} ka buffer bacha hai. Chhote size me hi trade karo, buffer khatam hone se pehle ruk jao.`;
       }
       return out;
     }
   },
   {
     key: "drawdown",
-    keywords: ["drawdown","overall loss","account blown","blown","max loss","dd "],
+    keywords: ["drawdown","overall loss","account blown","blown","max loss","dd ","kitna paas","kitna bacha","how close"],
     reply: () => {
       const balance = profile.accountSize || 100000;
       const maxDD = balance * 0.08;
       const floor = balance - maxDD;
-      return `📊 Max Overall Drawdown is ${fmtMoney(maxDD)} (8% of your $${balance.toLocaleString()} account) — this is STATIC, it does NOT move up with your profits.\n\nYour equity should never fall below ${fmtMoney(floor)}, no matter how much profit you've made.`;
+      let out = `📊 Max Overall Drawdown is ${fmtMoney(maxDD)} (8% of your $${balance.toLocaleString()} account) — this is STATIC, it does NOT move up with your profits.\n\nYour equity should never fall below ${fmtMoney(floor)}, no matter how much profit you've made.`;
+      if(profile.accountSize && profile.runningEquity !== null && profile.runningEquity !== undefined){
+        const buffer = profile.runningEquity - floor;
+        if(buffer <= 0){
+          out += `\n\n🚨 Tumhara current equity (${fmtMoney(profile.runningEquity)}) is floor ke barabar ya neeche hai — turant trading rok do aur SLF support se baat karo.`;
+        } else {
+          out += `\n\n📍 Tumhara current equity ${fmtMoney(profile.runningEquity)} hai — is floor tak ${fmtMoney(buffer)} ka buffer bacha hai.`;
+        }
+      }
+      return out;
     }
   },
   {
@@ -1365,7 +1409,13 @@ const BOT_TOPICS = [
     reply: () => {
       const balance = profile.accountSize || 100000;
       const target = balance * 0.08;
-      return `🎯 Profit Target to pass the 1-Step Challenge is ${fmtMoney(target)} (8% of your $${balance.toLocaleString()} account). No fixed minimum trading days required per SLF's published FAQ — but double-check your dashboard, as this can vary.`;
+      let out = `🎯 Profit Target to pass the 1-Step Challenge is ${fmtMoney(target)} (8% of your $${balance.toLocaleString()} account). No fixed minimum trading days required per SLF's published FAQ — but double-check your dashboard, as this can vary.`;
+      if(profile.accountSize && profile.runningEquity !== null && profile.runningEquity !== undefined){
+        const progress = profile.runningEquity - profile.accountSize;
+        const pctDone = Math.max(0, Math.min(100, (progress/target)*100));
+        out += `\n\n📍 Abhi tak tumhara progress: ${fmtMoney(progress)} / ${fmtMoney(target)} (${pctDone.toFixed(0)}% target complete).`;
+      }
+      return out;
     }
   },
   {
@@ -1410,14 +1460,14 @@ const BOT_TOPICS = [
   }
 ];
 
-function generateBotReply(userText){
+async function generateBotReply(userText){
   const lower = userText.toLowerCase();
   for(const topic of BOT_TOPICS){
     if(topic.keywords.some(k => lower.includes(k))){
-      return topic.reply(userText);
+      return await topic.reply(userText);
     }
   }
-  return `Mujhe pura yakeen nahi is sawal ka — but main in topics me help kar sakta hoon: daily loss limit, max drawdown, profit target, stop-loss rule, EA rules, news trading, lot size consistency, profit consistency, copy trading, payouts, ya breach hone par kya hota hai. Inme se koi ek try karo, ya SLF support se confirm kar lo.`;
+  return `Mujhe pura yakeen nahi is sawal ka — but main in topics me help kar sakta hoon: meri performance/review, daily loss limit, max drawdown, profit target, stop-loss rule, EA rules, news trading, lot size consistency, profit consistency, copy trading, payouts, ya breach hone par kya hota hai. Inme se koi ek try karo, ya SLF support se confirm kar lo.`;
 }
 
 let aiChatHistory = [];
@@ -1425,9 +1475,10 @@ let aiChatHistory = [];
 function renderAI(){
   app.innerHTML = `
     <h2 style="margin-bottom:6px;">🤖 SLF Rules Assistant</h2>
-    <p style="font-size:12px; color:var(--text-soft); margin-bottom:14px;">Apne account (${profile.accountSize ? '$'+profile.accountSize : 'account details profile me daalo'}) ke rules ke baare me kuch bhi pucho.</p>
+    <p style="font-size:12px; color:var(--text-soft); margin-bottom:14px;">Apne account (${profile.accountSize ? '$'+profile.accountSize : 'account details profile me daalo'}) aur journal ke real data ke saath — rules, risk, ya apni performance ke baare me kuch bhi pucho.</p>
     <div class="ai-suggestions">
-      <div class="ai-chip" data-q="Aaj maine $2000 loss kar liya, kya main aur trade kar sakta hoon?">Aaj $2000 loss ho gaya, aage trade karu?</div>
+      <div class="ai-chip" data-q="Meri trading performance kaisi hai?">Meri performance kaisi hai?</div>
+      <div class="ai-chip" data-q="Aaj maine kitna loss kiya hai, kya main aur trade kar sakta hoon?">Aaj aur trade kar sakta hoon?</div>
       <div class="ai-chip" data-q="Max drawdown breach hone se kya hota hai?">Max drawdown breach hone se kya hota hai?</div>
       <div class="ai-chip" data-q="Kya main is challenge me EA use kar sakta hoon?">EA use kar sakta hoon kya?</div>
     </div>
@@ -1450,7 +1501,7 @@ function renderAIMessages(){
   if(!el) return;
   el.innerHTML = "";
   if(aiChatHistory.length === 0){
-    el.innerHTML = `<div class="ai-bubble theirs">👋 Hey ${esc(profile.username)}! Mujhse apne SLF 1-Step Challenge account ke rules, daily loss limit, drawdown, ya risk se juda kuch bhi pucho.</div>`;
+    el.innerHTML = `<div class="ai-bubble theirs">👋 Hey ${esc(profile.username)}! Ab main tumhare real journal aur account data ko dekh ke jawab de sakta hoon — apni performance, daily loss limit, drawdown, ya risk se juda kuch bhi pucho.</div>`;
     return;
   }
   aiChatHistory.forEach(m => {
@@ -1462,7 +1513,7 @@ function renderAIMessages(){
   el.scrollTop = el.scrollHeight;
 }
 
-function sendAIMessage(){
+async function sendAIMessage(){
   const input = document.getElementById("aiInput");
   const text = input.value.trim();
   if(!text) return;
@@ -1477,12 +1528,14 @@ function sendAIMessage(){
   el.appendChild(thinkingBubble);
   el.scrollTop = el.scrollHeight;
 
-  setTimeout(() => {
-    const reply = generateBotReply(text);
-    aiChatHistory.push({ role:"assistant", content: reply });
-    renderAIMessages();
-  }, 400);
+  const [reply] = await Promise.all([
+    generateBotReply(text),
+    new Promise(r => setTimeout(r, 350))
+  ]);
+  aiChatHistory.push({ role:"assistant", content: reply });
+  renderAIMessages();
 }
+
 
 /* ================= DAILY TRACKER ================= */
 function todayDateStr(){
