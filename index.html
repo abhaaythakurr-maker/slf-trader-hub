@@ -841,11 +841,42 @@ function renderProfile(){
       <span id="bioMsg" style="font-size:11px;color:var(--green);margin-left:8px;"></span>
     </div>
 
+    <div class="section-block">
+      <h4>🔒 Change Password</h4>
+      <label>New Password</label>
+      <input type="password" id="newPassInput" placeholder="Naya password (6+ characters)">
+      <label>Confirm New Password</label>
+      <input type="password" id="confirmPassInput" placeholder="Naya password dobara likho">
+      <button class="primary" id="changePassBtn" style="width:100%;">Update Password</button>
+      <div class="gate-error" id="passChangeMsg"></div>
+    </div>
+
     <button class="ghost" id="logoutBtn" style="width:100%;">Logout</button>
   `;
   attachLongPress(document.getElementById("dpBox"), () => showImageModal(profile.photoBase64));
   document.getElementById("followersStat").addEventListener("click", () => showFollowListModal(profile.followers, "Followers"));
   document.getElementById("followingStat").addEventListener("click", () => showFollowListModal(profile.following, "Following"));
+  document.getElementById("changePassBtn").addEventListener("click", async () => {
+    const p1 = document.getElementById("newPassInput").value;
+    const p2 = document.getElementById("confirmPassInput").value;
+    const msg = document.getElementById("passChangeMsg");
+    if(p1.length < 6){ msg.style.color = "var(--red)"; msg.textContent = "Password kam se kam 6 characters ka hona chahiye."; return; }
+    if(p1 !== p2){ msg.style.color = "var(--red)"; msg.textContent = "Dono password match nahi ho rahe."; return; }
+    try{
+      await auth.currentUser.updatePassword(p1);
+      msg.style.color = "var(--green)";
+      msg.textContent = "✅ Password update ho gaya! Ab isi naye password se login hoga.";
+      document.getElementById("newPassInput").value = "";
+      document.getElementById("confirmPassInput").value = "";
+    }catch(e){
+      msg.style.color = "var(--red)";
+      if(e.code === "auth/requires-recent-login"){
+        msg.textContent = "Security ke liye dobara login karna padega pehle, phir turant try karo.";
+      } else {
+        msg.textContent = "❌ " + e.message;
+      }
+    }
+  });
   document.getElementById("saveAccBtn").addEventListener("click", async () => {
     const newSize = parseFloat(document.getElementById("accSize").value) || null;
     const fields = {
