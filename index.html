@@ -1143,30 +1143,82 @@ async function renderPublicProfile(uid){
   });
 }
 
-/* ================= RMS CALCULATOR + RULES ================= */
-const SLF_RULES_1STEP = {
-  maxDailyLossPct: 4,
-  maxOverallDDPct: 8,
-  profitTargetPct: 8
+/* ================= RMS CALCULATOR + RULES (per account type — verified against SLF's live help center) ================= */
+/* Source: help.sureleveragefunding.com — 1 Step (New), 2 Step, and Instant Funding FAQ & Rules articles. */
+const SLF_RULES = {
+  "1 Step Challenge": {
+    dailyLossPct: 3,
+    maxDDPct: 10,
+    ddType: "trailing",
+    profitTargetPct: 10,
+    consistencyPct: 50,
+    profitSplit: "90/10",
+    payoutSchedule: "Bi-weekly",
+    news: "Red-news 5-min window trades are soft-breached (not a free-for-all like the older 1-Step rules).",
+    rulesText: [
+      "<b>Profit Target:</b> 10% of starting balance during the evaluation. No extra target once funded.",
+      "<b>Daily Drawdown:</b> 3% of your STARTING balance — recalculated every day at 5pm EST off the higher of balance or equity.",
+      "<b>Max Drawdown:</b> 10%, but it's a TRAILING high-water mark — the floor rises as your balance/equity hits new highs, and never comes back down. Dollar-wise the buffer stays fixed at 10% of your starting balance.",
+      "<b>Profit Consistency:</b> No single trading day can be ≥50% of your total profit for the payout period.",
+      "<b>Stop-Loss:</b> Mandatory within 5 minutes of entry (funded phase).",
+      "<b>News Trading:</b> Trades opened/closed within 5 minutes of a red-flag news event get soft-breached (profit deducted) — this is stricter than it used to be.",
+      "<b>EAs:</b> Not permitted.",
+      "<b>Profit Split:</b> 90/10 in your favour.",
+      "<b>Payouts:</b> Bi-weekly, once rules are satisfied."
+    ]
+  },
+  "2 Step Challenge": {
+    dailyLossPct: 5,
+    maxDDPct: 10,
+    ddType: "static",
+    profitTargetPct: [10, 5],
+    consistencyPct: 25,
+    profitSplit: "80/20",
+    payoutSchedule: "Instant request (24h guarantee)",
+    rulesText: [
+      "<b>Profit Target:</b> Phase 1 = 10%, Phase 2 = 5% of starting balance. No time limit on either phase.",
+      "<b>Daily Drawdown:</b> 5% of your STARTING balance — recalculated daily at 5pm EST off the higher of balance or equity.",
+      "<b>Max Drawdown:</b> 10% of your STARTING balance — this is STATIC, it does not trail up with profit and never resets.",
+      "<b>Profit Consistency:</b> No single trading day can be ≥25% of your total profit for the payout period.",
+      "<b>Lot Consistency:</b> Max lot ≤ your average +100% · Min lot ≥ your average −75% (checked at payout).",
+      "<b>Stop-Loss:</b> Mandatory within 5 minutes of entry (funded phase).",
+      "<b>News Trading:</b> Allowed at all times.",
+      "<b>EAs:</b> Not permitted.",
+      "<b>Profit Split:</b> 80/20.",
+      "<b>Payouts:</b> Instant request, 24-hour processing guarantee."
+    ]
+  },
+  "Instant Funding": {
+    dailyLossPct: 4,
+    maxDDPct: 8,
+    ddType: "static",
+    profitTargetPct: null,
+    consistencyPct: 25,
+    profitSplit: "Tiered: 50% → 55% → 60% → 65% → 70% → 80% (by withdrawal #)",
+    payoutSchedule: "Every 14 days",
+    rulesText: [
+      "<b>Profit Target:</b> None — you're funded instantly, no evaluation phase.",
+      "<b>Daily Drawdown:</b> 4% of your STARTING balance — recalculated daily at 5pm EST off the higher of balance or equity.",
+      "<b>Max Drawdown:</b> 8% of your STARTING balance — STATIC, does not trail up with profit.",
+      "<b>Floating Loss Rule (accounts bought after 2 Feb 2026):</b> Equity can't dip more than 1% below your starting balance at ANY point, even intraday/floating. 1st breach = profit split halved, 2nd breach = account closed.",
+      "<b>Profit Consistency:</b> No single trading day can be ≥25% of your total profit for the payout period.",
+      "<b>Lot Consistency:</b> Max lot ≤ average +100% · Min lot ≥ average −75% (removable as a paid add-on on some plans).",
+      "<b>News Trading:</b> Allowed at all times.",
+      "<b>EAs:</b> Not permitted.",
+      "<b>Profit Split:</b> Starts at 50% on your 1st withdrawal, climbs to 80% by your 6th.",
+      "<b>Payouts:</b> Every 14 days (instant request only during promos)."
+    ]
+  }
 };
 
-const RULES_LIST = [
-  "<b>Max Daily Loss:</b> 4% of initial balance — recalculated every day at 5pm EST using the higher of your balance or equity.",
-  "<b>Max Overall Drawdown:</b> 8% of initial balance — this is STATIC, meaning it does NOT trail up with your profits.",
-  "<b>Profit Target:</b> 8% of initial balance to pass the 1-Step Challenge.",
-  "<b>Stop-Loss:</b> Mandatory within 5 minutes of opening a trade (funded phase). Recommended during challenge.",
-  "<b>EAs / Bots:</b> Not permitted on the 1-Step Challenge.",
-  "<b>News Trading:</b> Allowed at all times.",
-  "<b>Lot Size Consistency:</b> Max lot size ≤ your average +100% · Min lot size ≥ your average −75%.",
-  "<b>Profit Consistency:</b> No single trading day's profit should exceed 25% of your total profit.",
-  "<b>Copy Trading:</b> Only allowed for copying your own trades — copying other traders is not allowed.",
-  "<b>Trading Days:</b> No fixed minimum required to pass, per SLF's published 1-Step Challenge FAQ — always verify on your dashboard."
-];
-
+let rmsAccountType = null;
+let rmsPhase = 1;
 let rmsTab = "calc";
+
 function renderRMS(){
+  if(!rmsAccountType) rmsAccountType = ACCOUNT_TYPES.includes(profile.accountType) ? profile.accountType : "1 Step Challenge";
   app.innerHTML = `
-    <h2 style="margin-bottom:14px;">📊 RMS — 1 Step Challenge</h2>
+    <h2 style="margin-bottom:14px;">📊 RMS — Risk Management</h2>
     <div class="rms-tabs">
       <div class="rms-tab ${rmsTab==='calc'?'active':''}" id="rmsTabCalc">Calculator</div>
       <div class="rms-tab ${rmsTab==='possize'?'active':''}" id="rmsTabPosSize">Lot Size</div>
@@ -1184,11 +1236,30 @@ function renderRMS(){
 
 async function renderRMSCalculator(){
   const content = document.getElementById("rmsContent");
+  const rules = SLF_RULES[rmsAccountType];
   const defaultBalance = profile.accountSize || 100000;
+  const defaultPeak = Math.max(defaultBalance, profile.runningEquity || defaultBalance);
+
   content.innerHTML = `
     <div class="section-block">
-      <label>Account Balance ($)</label>
+      <label>Account Type</label>
+      <select id="rmsAccType">
+        ${ACCOUNT_TYPES.map(t => `<option value="${t}" ${rmsAccountType===t?'selected':''}>${t}</option>`).join("")}
+      </select>
+      ${rmsAccountType === "2 Step Challenge" ? `
+        <label>Challenge Phase</label>
+        <select id="rmsPhaseSel">
+          <option value="1" ${rmsPhase===1?'selected':''}>Phase 1 — 10% target</option>
+          <option value="2" ${rmsPhase===2?'selected':''}>Phase 2 — 5% target</option>
+        </select>
+      ` : ""}
+      <label>Starting Balance ($)</label>
       <input type="number" id="rmsBalance" value="${defaultBalance}">
+      ${rules.ddType === "trailing" ? `
+        <label>Highest Balance/Equity Reached So Far ($)</label>
+        <input type="number" id="rmsPeak" value="${defaultPeak}">
+        <div style="font-size:11px; color:var(--text-soft); margin:-6px 0 12px;">1 Step ka max drawdown TRAILING hai — jab tak naya high nahi bana, starting balance jaisa hi rehne do.</div>
+      ` : ""}
       <label>Today's P&amp;L so far ($)</label>
       <input type="number" id="rmsTodayPL" value="0">
       <div id="rmsTodayNote" style="font-size:11px; color:var(--text-soft); margin:-6px 0 12px;">Aapke journal se aaj ke trades check ho rahe hain…</div>
@@ -1197,8 +1268,11 @@ async function renderRMSCalculator(){
       <button class="primary" id="rmsCalcBtn" style="width:100%;">Calculate</button>
     </div>
     <div id="rmsResults"></div>
-    <div class="rms-disclaimer">⚠️ This is a formula-based calculator using SLF's publicly documented 1-Step Challenge rules — not financial advice. Rule numbers can change; always confirm current limits on your SLF dashboard before trading.</div>
+    <div class="rms-disclaimer">⚠️ Numbers yahan SLF ke publicly documented rules (per account type) par based hain — not financial advice. SLF apne rules update karta rehta hai, isliye final confirmation ke liye hamesha apna live SLF dashboard check karo.</div>
   `;
+  document.getElementById("rmsAccType").addEventListener("change", (e) => { rmsAccountType = e.target.value; renderRMSCalculator(); });
+  const phaseSel = document.getElementById("rmsPhaseSel");
+  if(phaseSel) phaseSel.addEventListener("change", (e) => { rmsPhase = parseInt(e.target.value); computeRMS(); });
   document.getElementById("rmsCalcBtn").addEventListener("click", computeRMS);
   computeRMS();
 
@@ -1219,30 +1293,46 @@ async function renderRMSCalculator(){
 }
 
 function computeRMS(){
+  const rules = SLF_RULES[rmsAccountType];
   const balance = parseFloat(document.getElementById("rmsBalance").value) || 0;
+  const peakEl = document.getElementById("rmsPeak");
+  const peak = rules.ddType === "trailing" ? Math.max(parseFloat(peakEl ? peakEl.value : balance) || balance, balance) : balance;
   const todayPL = parseFloat(document.getElementById("rmsTodayPL").value) || 0;
   const riskPct = parseFloat(document.getElementById("rmsRiskPct").value) || 1;
 
-  const maxDailyLoss = balance * (SLF_RULES_1STEP.maxDailyLossPct/100);
-  const maxOverallDD = balance * (SLF_RULES_1STEP.maxOverallDDPct/100);
-  const profitTarget = balance * (SLF_RULES_1STEP.profitTargetPct/100);
+  const maxDailyLoss = balance * (rules.dailyLossPct/100);
+  const ddDollarBuffer = balance * (rules.maxDDPct/100);
+  const ddReference = rules.ddType === "trailing" ? peak : balance;
+  const ddFloor = ddReference - ddDollarBuffer;
+
+  let profitTargetPct = rules.profitTargetPct;
+  let phaseLabel = "";
+  if(rmsAccountType === "2 Step Challenge"){
+    profitTargetPct = rules.profitTargetPct[rmsPhase - 1];
+    phaseLabel = ` (Phase ${rmsPhase})`;
+  }
+  const profitTarget = profitTargetPct ? balance * (profitTargetPct/100) : null;
+
   const lossUsedToday = todayPL < 0 ? Math.abs(todayPL) : 0;
   const dailyLossRemaining = maxDailyLoss - lossUsedToday;
   const suggestedRiskPerTrade = balance * (riskPct/100);
-  const floorEquity = balance - maxOverallDD;
+  const currentEquityEstimate = balance + todayPL;
+  const ddBufferRemaining = currentEquityEstimate - ddFloor;
 
   const resultsEl = document.getElementById("rmsResults");
-  const breached = dailyLossRemaining <= 0;
+  const breached = dailyLossRemaining <= 0 || ddBufferRemaining <= 0;
   resultsEl.innerHTML = `
     <div class="rms-output">
-      <div class="out-card"><div class="lbl">Max Daily Loss</div><div class="val">$${maxDailyLoss.toLocaleString()}</div><div class="sub">4% of balance</div></div>
+      <div class="out-card"><div class="lbl">Max Daily Loss</div><div class="val">$${maxDailyLoss.toLocaleString()}</div><div class="sub">${rules.dailyLossPct}% of starting balance</div></div>
       <div class="out-card ${dailyLossRemaining < maxDailyLoss*0.25 ? 'warn':''}"><div class="lbl">Daily Loss Remaining Today</div><div class="val">$${Math.max(0,dailyLossRemaining).toLocaleString()}</div><div class="sub">Used so far: $${lossUsedToday.toLocaleString()}</div></div>
-      <div class="out-card"><div class="lbl">Max Overall Drawdown</div><div class="val">$${maxOverallDD.toLocaleString()}</div><div class="sub">Static — equity floor: $${floorEquity.toLocaleString()}</div></div>
-      <div class="out-card"><div class="lbl">Profit Target to Pass</div><div class="val">$${profitTarget.toLocaleString()}</div><div class="sub">8% of balance</div></div>
+      <div class="out-card"><div class="lbl">Max Drawdown (${rules.ddType === "trailing" ? "trailing" : "static"})</div><div class="val">$${ddDollarBuffer.toLocaleString()}</div><div class="sub">Floor: $${ddFloor.toLocaleString()}</div></div>
+      <div class="out-card ${ddBufferRemaining < ddDollarBuffer*0.25 ? 'warn':''}"><div class="lbl">Drawdown Buffer Remaining</div><div class="val">$${Math.max(0,ddBufferRemaining).toLocaleString()}</div><div class="sub">at est. equity $${Math.round(currentEquityEstimate).toLocaleString()}</div></div>
+      ${profitTarget ? `<div class="out-card"><div class="lbl">Profit Target${phaseLabel}</div><div class="val">$${profitTarget.toLocaleString()}</div><div class="sub">${profitTargetPct}% of starting balance</div></div>` : `<div class="out-card"><div class="lbl">Profit Target</div><div class="val">None</div><div class="sub">Instant Funding — no evaluation target</div></div>`}
       <div class="out-card"><div class="lbl">Suggested Max Risk / Trade</div><div class="val">$${suggestedRiskPerTrade.toLocaleString()}</div><div class="sub">${riskPct}% of balance</div></div>
       <div class="out-card"><div class="lbl">Trades Left Today (approx)</div><div class="val">${suggestedRiskPerTrade>0 ? Math.floor(Math.max(0,dailyLossRemaining)/suggestedRiskPerTrade) : "—"}</div><div class="sub">at this risk-per-trade size</div></div>
+      <div class="out-card"><div class="lbl">Profit Consistency Cap</div><div class="val">${rules.consistencyPct}%</div><div class="sub">max share of total profit from a single day</div></div>
     </div>
-    ${breached ? `<div class="breach-banner">🚨 Daily loss limit hit or exceeded — SLF rules likely consider this account breached for today. Stop trading.</div>` : ""}
+    ${breached ? `<div class="breach-banner">🚨 Daily loss limit or drawdown floor hit/exceeded — SLF rules likely consider this account breached. Stop trading.</div>` : ""}
   `;
 }
 
@@ -1312,10 +1402,15 @@ function computePositionSize(){
 
 function renderRMSRulesTab(){
   const content = document.getElementById("rmsContent");
-  content.innerHTML = `
-    <ul class="rules-list">${RULES_LIST.map(r => `<li>${r}</li>`).join("")}</ul>
-    <div class="rms-disclaimer">Source: SLF's publicly documented 1-Step Challenge rules. SLF's own rule pages have occasionally shown minor inconsistencies (per independent reviews) — treat this as a quick reference, not the final word. Always check your live SLF dashboard.</div>
-  `;
+  content.innerHTML = ACCOUNT_TYPES.map(type => {
+    const r = SLF_RULES[type];
+    return `
+      <div class="section-block">
+        <h4>${esc(type)}</h4>
+        <ul class="rules-list">${r.rulesText.map(x => `<li>${x}</li>`).join("")}</ul>
+      </div>
+    `;
+  }).join("") + `<div class="rms-disclaimer">Source: SLF's publicly documented rules per account type (help.sureleveragefunding.com). SLF updates these rules from time to time (the 1 Step Challenge in particular was recently overhauled) — treat this as a quick reference, not the final word. Always check your live SLF dashboard.</div>`;
 }
 
 
@@ -1362,8 +1457,10 @@ const BOT_TOPICS = [
     key: "dailyloss",
     keywords: ["daily loss","daily limit","loss today","lost today","aur trade","more trade","can i trade","trade karu"],
     reply: async (text) => {
+      const type = SLF_RULES[profile.accountType] ? profile.accountType : "1 Step Challenge";
+      const rules = SLF_RULES[type];
       const balance = profile.accountSize || 100000;
-      const maxDailyLoss = balance * 0.04;
+      const maxDailyLoss = balance * (rules.dailyLossPct/100);
       let lossAmt = extractNumber(text);
       let autoNote = "";
       if(lossAmt === null){
@@ -1374,13 +1471,14 @@ const BOT_TOPICS = [
           ? ` (tumhare journal ke ${todayTrades.length} trade${todayTrades.length>1?'s':''} se auto-nikala hai)`
           : ` (aaj koi trade journal me nahi mili, isliye 0 maan raha hoon)`;
       }
-      let out = `📉 Max Daily Loss on your $${balance.toLocaleString()} account is ${fmtMoney(maxDailyLoss)} (4%).`;
+      let out = `📉 Max Daily Loss on your $${balance.toLocaleString()} ${type} account is ${fmtMoney(maxDailyLoss)} (${rules.dailyLossPct}%).`;
       const remaining = maxDailyLoss - lossAmt;
       if(remaining <= 0){
         out += `\n\n🚨 Aaj ka loss ${fmtMoney(lossAmt)}${autoNote} — ye daily limit se zyada/barabar hai. Trading ROK DO, warna breach ho sakta hai.`;
       } else {
         out += `\n\nAaj ka loss ${fmtMoney(lossAmt)}${autoNote}, to abhi ${fmtMoney(remaining)} ka buffer bacha hai. Chhote size me hi trade karo, buffer khatam hone se pehle ruk jao.`;
       }
+      if(!profile.accountType) out += `\n\n(Profile me account type set nahi hai, isliye 1 Step Challenge ke rules maan raha hoon — profile me sahi type daal do to exact numbers milenge.)`;
       return out;
     }
   },
@@ -1388,10 +1486,14 @@ const BOT_TOPICS = [
     key: "drawdown",
     keywords: ["drawdown","overall loss","account blown","blown","max loss","dd ","kitna paas","kitna bacha","how close"],
     reply: () => {
+      const type = SLF_RULES[profile.accountType] ? profile.accountType : "1 Step Challenge";
+      const rules = SLF_RULES[type];
       const balance = profile.accountSize || 100000;
-      const maxDD = balance * 0.08;
-      const floor = balance - maxDD;
-      let out = `📊 Max Overall Drawdown is ${fmtMoney(maxDD)} (8% of your $${balance.toLocaleString()} account) — this is STATIC, it does NOT move up with your profits.\n\nYour equity should never fall below ${fmtMoney(floor)}, no matter how much profit you've made.`;
+      const ddBuffer = balance * (rules.maxDDPct/100);
+      const isTrailing = rules.ddType === "trailing";
+      const peak = isTrailing ? Math.max(balance, profile.runningEquity || balance) : balance;
+      const floor = peak - ddBuffer;
+      let out = `📊 Max Drawdown on your ${type} account is ${fmtMoney(ddBuffer)} (${rules.maxDDPct}% of starting balance) — this is ${isTrailing ? "TRAILING (the floor rises with your highest balance/equity, and never comes back down)" : "STATIC, it does NOT move up with your profits"}.\n\nYour equity should never fall below ${fmtMoney(floor)}${isTrailing ? " (based on your highest balance/equity reached so far)" : ""}.`;
       if(profile.accountSize && profile.runningEquity !== null && profile.runningEquity !== undefined){
         const buffer = profile.runningEquity - floor;
         if(buffer <= 0){
@@ -1400,6 +1502,7 @@ const BOT_TOPICS = [
           out += `\n\n📍 Tumhara current equity ${fmtMoney(profile.runningEquity)} hai — is floor tak ${fmtMoney(buffer)} ka buffer bacha hai.`;
         }
       }
+      if(!profile.accountType) out += `\n\n(Profile me account type set nahi hai, isliye 1 Step Challenge maan raha hoon.)`;
       return out;
     }
   },
@@ -1407,14 +1510,23 @@ const BOT_TOPICS = [
     key: "profittarget",
     keywords: ["profit target","pass challenge","how much profit","target hit","target kitna"],
     reply: () => {
+      const type = SLF_RULES[profile.accountType] ? profile.accountType : "1 Step Challenge";
+      const rules = SLF_RULES[type];
       const balance = profile.accountSize || 100000;
-      const target = balance * 0.08;
-      let out = `🎯 Profit Target to pass the 1-Step Challenge is ${fmtMoney(target)} (8% of your $${balance.toLocaleString()} account). No fixed minimum trading days required per SLF's published FAQ — but double-check your dashboard, as this can vary.`;
+      if(!rules.profitTargetPct){
+        return `🎯 ${type} accounts me koi profit target nahi hota — tum seedha funded balance pe trade karte ho, bina kisi evaluation target ke. Bas daily loss aur drawdown rules follow karne hain.`;
+      }
+      const isTwoPhase = Array.isArray(rules.profitTargetPct);
+      const targetPct = isTwoPhase ? rules.profitTargetPct[0] : rules.profitTargetPct;
+      const phaseNote = isTwoPhase ? ` (Phase 1 target — Phase 2 me ye ${rules.profitTargetPct[1]}% ho jata hai)` : "";
+      const target = balance * (targetPct/100);
+      let out = `🎯 Profit Target for your ${type} account is ${fmtMoney(target)} (${targetPct}%${phaseNote} of your $${balance.toLocaleString()} account). No fixed minimum trading days required — but double-check your dashboard, as rules can change.`;
       if(profile.accountSize && profile.runningEquity !== null && profile.runningEquity !== undefined){
         const progress = profile.runningEquity - profile.accountSize;
         const pctDone = Math.max(0, Math.min(100, (progress/target)*100));
         out += `\n\n📍 Abhi tak tumhara progress: ${fmtMoney(progress)} / ${fmtMoney(target)} (${pctDone.toFixed(0)}% target complete).`;
       }
+      if(!profile.accountType) out += `\n\n(Profile me account type set nahi hai, isliye 1 Step Challenge maan raha hoon.)`;
       return out;
     }
   },
@@ -1426,22 +1538,32 @@ const BOT_TOPICS = [
   {
     key: "ea",
     keywords: ["ea","bot","expert advisor","algo","automated"],
-    reply: () => `🤖 EAs / Expert Advisors / bots are NOT permitted on the 1-Step Challenge. Stick to manual or semi-manual trading.`
+    reply: () => `🤖 EAs / Expert Advisors / bots are NOT permitted on any of SLF's account types — 1 Step, 2 Step, ya Instant Funding, teeno me manual (ya semi-manual) trading hi karni hai.`
   },
   {
     key: "news",
     keywords: ["news trad","nfp","fomc","news event"],
-    reply: () => `📰 News trading is allowed at all times on SLF's 1-Step Challenge — no restriction during high-impact news.`
+    reply: () => {
+      const type = SLF_RULES[profile.accountType] ? profile.accountType : "1 Step Challenge";
+      if(type === "1 Step Challenge"){
+        return `📰 1 Step Challenge me koi trade agar kisi red-flag news event ke 5-minute window ke andar open/close hui, to wo soft-breach ho sakti hai (uska profit deduct ho jayega). 2 Step aur Instant Funding me news trading hamesha bina restriction ke allowed hai.`;
+      }
+      return `📰 ${type} accounts me news trading hamesha allowed hai — high-impact news ke dauraan bhi koi restriction nahi hai.`;
+    }
   },
   {
     key: "lotsize",
     keywords: ["lot size","lot consistency","max lot","min lot"],
-    reply: () => `📐 Lot Size Consistency rule: your max lot size can't exceed your average +100%, and your min lot size can't be below your average -75%. Trades opened close together in the same pair/direction count as one "Trade Idea".`
+    reply: () => `📐 Lot Size Consistency rule (2 Step Challenge & Instant Funding): max lot size average se +100% se zyada nahi ho sakta, aur min lot average se -75% se kam nahi ho sakta. Trades jo close together same pair/direction me open hui hon, wo ek "Trade Idea" maani jaati hain. (1 Step Challenge ke liye SLF ki page abhi exact % specify nahi karti — apna dashboard confirm kar lena.)`
   },
   {
     key: "consistency",
-    keywords: ["consistency","single day profit","25%"],
-    reply: () => `⚖️ Profit Consistency rule: no single trading day's profit should be ≥25% of your total profit for the payout period. Spread your gains across multiple days.`
+    keywords: ["consistency","single day profit","25%","50%"],
+    reply: () => {
+      const type = SLF_RULES[profile.accountType] ? profile.accountType : "1 Step Challenge";
+      const rules = SLF_RULES[type];
+      return `⚖️ Profit Consistency rule for ${type}: koi bhi ek trading day ka profit total profit ke ${rules.consistencyPct}% se zyada/barabar nahi hona chahiye (payout period ke liye). Apna profit multiple days me spread karo.`;
+    }
   },
   {
     key: "copytrading",
@@ -1451,7 +1573,11 @@ const BOT_TOPICS = [
   {
     key: "payout",
     keywords: ["payout","withdraw","profit split"],
-    reply: () => `💰 SLF offers instant payout requests with a 24-hour processing guarantee (extra 10% profit split bonus if delayed beyond that). Standard profit split starts around 80% and can scale higher — check your dashboard for your current split.`
+    reply: () => {
+      const type = SLF_RULES[profile.accountType] ? profile.accountType : "1 Step Challenge";
+      const rules = SLF_RULES[type];
+      return `💰 ${type} payout schedule: ${rules.payoutSchedule}. Profit split: ${rules.profitSplit}. Ek baar payout request karne ke baad 24-hour processing guarantee lagti hai (delay hone par extra 10% split bonus milta hai) — exact current numbers ke liye dashboard confirm kar lena.`;
+    }
   },
   {
     key: "breach",
